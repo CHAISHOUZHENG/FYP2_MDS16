@@ -1,4 +1,3 @@
-import React from 'react';
 import { Brain, TrendingUp, Activity, BarChart3, CheckCircle, ArrowRight, Star } from 'lucide-react';
 import { AnimatedSection } from './AnimatedSection';
 

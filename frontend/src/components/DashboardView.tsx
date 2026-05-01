@@ -1,10 +1,8 @@
-import React from 'react';
 import { StressResult } from '../lib/supabase';
 import {
   TrendingUp,
   Activity,
   Heart,
-  Smile,
   Lightbulb,
   Calendar,
   Sparkles,
@@ -214,7 +212,7 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
                 </div>
               </div>
               <div className="flex items-end justify-between h-40 gap-1.5">
-                {results.slice(0, 7).reverse().map((result, index) => {
+                {results.slice(0, 7).reverse().map((result) => {
                   const height = (result.stress_score / 100) * 100;
                   const info = getStressLevel(result.stress_score);
                   return (

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Activity, BarChart3, Brain, Home, User, LogOut } from 'lucide-react';
 
 interface SidebarProps {

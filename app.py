@@ -3,7 +3,7 @@ import io
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from torchvision import transforms
@@ -15,7 +15,24 @@ from dotenv import load_dotenv
 
 from models.resnet import ResNet18
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+import sys
+import tempfile
+import types
+
+
+def install_tensorflow_doc_controls_stub():
+    """Let MediaPipe import without loading TensorFlow's docgen-only helper."""
+    doc_controls = types.ModuleType("tensorflow.tools.docs.doc_controls")
+    doc_controls.do_not_generate_docs = lambda obj: obj
+
+    sys.modules.setdefault("tensorflow", types.ModuleType("tensorflow"))
+    sys.modules.setdefault("tensorflow.tools", types.ModuleType("tensorflow.tools"))
+    sys.modules.setdefault("tensorflow.tools.docs", types.ModuleType("tensorflow.tools.docs"))
+    sys.modules.setdefault("tensorflow.tools.docs.doc_controls", doc_controls)
+
+
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
+install_tensorflow_doc_controls_stub()
 
 import mediapipe as mp
 
@@ -69,7 +86,7 @@ transform = transforms.Compose([
 
 mp_face_detection = mp.solutions.face_detection
 face_detector = mp_face_detection.FaceDetection(
-    model_selection=1,
+    model_selection=0,
     min_detection_confidence=0.65
 )
 
@@ -138,7 +155,7 @@ def detect_face(image: np.ndarray):
 def validate_face_quality(face: np.ndarray) -> dict:
     h, w = face.shape[:2]
 
-    if h < 80 or w < 80:
+    if h < 70 or w < 70:
         return {
             "ok": False,
             "message": "Face is too small or low resolution. Please upload a clearer image."
@@ -148,9 +165,9 @@ def validate_face_quality(face: np.ndarray) -> dict:
 
     blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
     if h < 120 or w < 120:
-        blur_threshold = 40
+        blur_threshold = 35
     else:
-        blur_threshold = 60
+        blur_threshold = 55
 
     if blur_score < blur_threshold:
         return {
@@ -160,13 +177,13 @@ def validate_face_quality(face: np.ndarray) -> dict:
 
     brightness = gray.mean()
 
-    if brightness < 40:
+    if brightness < 35:
         return {
             "ok": False,
             "message": "Image is too dark. Please upload an image with better lighting."
         }
 
-    if brightness > 220:
+    if brightness > 225:
         return {
             "ok": False,
             "message": "Image is too bright. Please upload an image with better lighting."

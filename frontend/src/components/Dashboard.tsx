@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase, StressResult } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Sidebar } from './Sidebar';
@@ -8,11 +8,10 @@ import { ProfileView } from './ProfileView';
 import { StressAnalyzer } from './StressAnalyzer';
 
 interface DashboardProps {
-  onAnalyze: () => void;
   onLogOut: () => void;
 }
 
-export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
+export function Dashboard({ onLogOut }: DashboardProps) {
   const { profile, fetchProfile } = useAuth();
   const [results, setResults] = useState<StressResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +58,12 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
       case 'dashboard':
         return <DashboardView results={results} profile={profile} />;
       case 'analyze':
-        return <StressAnalyzer onComplete={handleAnalysisComplete} />;
+        return (
+          <StressAnalyzer
+            onBack={() => setCurrentView('dashboard')}
+            onAnalysisComplete={handleAnalysisComplete}
+          />
+        );
       case 'history':
         return <HistoryView results={results} />;
       case 'profile':

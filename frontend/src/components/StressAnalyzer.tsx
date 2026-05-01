@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Upload,
   Activity,
@@ -14,7 +14,6 @@ import {
   Trash2,
   Sparkles,
   Heart,
-  Shield
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -39,9 +38,9 @@ interface StressAnalyzerProps {
 
 type AnalysisStep = 'idle' | 'detecting' | 'quality' | 'analyzing' | 'generating';
 
-export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerProps) {
+export function StressAnalyzer({ onBack: _onBack, onAnalysisComplete }: StressAnalyzerProps) {
   const { session } = useAuth();
-  const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8000/predict');
+  const backendUrl = 'http://127.0.0.1:8000/predict';
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -50,13 +49,13 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
-  const [imageQuality, setImageQuality] = useState<'good' | 'checking' | null>(null);
+  const [imageStatus, setImageStatus] = useState<'selected' | 'validated' | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     setError(null);
     setResult(null);
-    setImageQuality(null);
+    setImageStatus(null);
 
     if (!file) {
       setSelectedFile(null);
@@ -66,11 +65,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
 
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
-    setImageQuality('checking');
-
-    setTimeout(() => {
-      setImageQuality('good');
-    }, 800);
+    setImageStatus('selected');
   };
 
   const handleCameraCapture = (file: File) => {
@@ -79,17 +74,13 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setShowCamera(false);
-    setImageQuality('checking');
-
-    setTimeout(() => {
-      setImageQuality('good');
-    }, 800);
+    setImageStatus('selected');
   };
 
   const handleRemoveImage = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
-    setImageQuality(null);
+    setImageStatus(null);
     setError(null);
     setResult(null);
   };
@@ -144,8 +135,10 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
       setAnalysisStep('generating');
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      setImageStatus('validated');
       setResult(data);
     } catch (err) {
+      setImageStatus(selectedFile ? 'selected' : null);
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoading(false);
@@ -303,7 +296,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                             className="w-full h-auto max-h-80 object-contain"
                           />
 
-                          {imageQuality === 'checking' && (
+                          {isLoading && (
                             <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center backdrop-blur-sm">
                               <div className="bg-white rounded-xl px-6 py-4 flex items-center gap-3 shadow-xl">
                                 <Activity className="w-5 h-5 text-cyan-600 animate-spin" />
@@ -312,10 +305,18 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                             </div>
                           )}
 
-                          {imageQuality === 'good' && (
-                            <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-slideDown">
-                              <CheckCircle className="w-4 h-4" />
-                              <span className="text-sm font-semibold">Face detected</span>
+                          {imageStatus && !isLoading && (
+                            <div className={`absolute top-4 right-4 text-white px-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-slideDown ${
+                              imageStatus === 'validated' ? 'bg-emerald-500' : 'bg-slate-700'
+                            }`}>
+                              {imageStatus === 'validated' ? (
+                                <CheckCircle className="w-4 h-4" />
+                              ) : (
+                                <ImageIcon className="w-4 h-4" />
+                              )}
+                              <span className="text-sm font-semibold">
+                                {imageStatus === 'validated' ? 'Face validated' : 'Image selected'}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -331,7 +332,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
 
                           <button
                             onClick={handleUpload}
-                            disabled={isLoading || !imageQuality || imageQuality === 'checking'}
+                            disabled={isLoading || !selectedFile}
                             className="flex-1 bg-gradient-to-r from-cyan-600 to-teal-600 text-white py-3.5 px-6 rounded-xl font-bold text-lg hover:from-cyan-700 hover:to-teal-700 hover:shadow-2xl hover:shadow-cyan-200 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2 hover:scale-[1.02]"
                           >
                             {isLoading ? (

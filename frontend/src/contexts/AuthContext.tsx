@@ -14,6 +14,18 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const friendlyAuthError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.toLowerCase().includes('failed to fetch')) {
+    return new Error(
+      'Could not connect to Supabase. Check VITE_SUPABASE_URL in frontend/.env, make sure the Supabase project is active, then restart npm run dev.'
+    );
+  }
+
+  return error;
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -30,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user) {
         fetchProfileById(session.user.id);
@@ -60,37 +72,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string, fullName: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
+  const ensureProfile = async (userId: string, email?: string, fullName?: string) => {
+    const { error } = await supabase.from('profiles').upsert({
+      id: userId,
+      email: email ?? '',
+      ...(fullName ? { full_name: fullName } : {}),
     });
 
     if (error) throw error;
+    await fetchProfileById(userId);
+  };
 
-    if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: data.user.id,
+  const signUp = async (email: string, password: string, fullName: string) => {
+    try {
+      const { data, error } = await supabase.auth.signUp({
         email,
-        full_name: fullName,
+        password,
       });
 
-      if (profileError) throw profileError;
-      await fetchProfileById(data.user.id);
+      if (error) throw error;
+
+      if (data.session && data.user) {
+        await ensureProfile(data.user.id, email, fullName);
+      }
+    } catch (error) {
+      throw friendlyAuthError(error);
     }
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.user) {
-      await fetchProfileById(data.session.user.id);
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        await ensureProfile(
+          data.session.user.id,
+          data.session.user.email
+        );
+      }
+    } catch (error) {
+      throw friendlyAuthError(error);
     }
   };
 

@@ -1,6 +1,5 @@
-import React from 'react';
 import { StressResult } from '../lib/supabase';
-import { BarChart3, Calendar, Filter } from 'lucide-react';
+import { BarChart3, Calendar } from 'lucide-react';
 
 interface HistoryViewProps {
   results: StressResult[];
