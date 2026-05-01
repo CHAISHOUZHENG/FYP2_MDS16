@@ -13,7 +13,7 @@ import json
 from google import genai
 from dotenv import load_dotenv
 
-from models.resnet import ResNet18
+from models.senet import SENet18
 
 import sys
 import tempfile
@@ -72,7 +72,7 @@ stress_weights = {
 }
 
 # load model
-model = ResNet18()
+model = SENet18()
 checkpoint = torch.load("best_checkpoint.tar", map_location="cpu")
 model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
