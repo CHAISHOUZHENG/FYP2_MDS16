@@ -295,7 +295,7 @@ def detect_face(image: np.ndarray):
             candidates.append(profile_candidate)
 
     if len(candidates) == 0:
-        return None, "no_face"
+        return None, "no_face", None
 
     candidates = sorted(
         candidates,
@@ -309,13 +309,54 @@ def detect_face(image: np.ndarray):
     ]
 
     if len(significant_candidates) > 1:
-        return None, "multiple_faces"
+        return None, "multiple_faces", None
 
     if not is_front_facing(candidates[0]):
-        return None, "side_face"
+        return None, "side_face", None
 
     cropped_face = crop_face_from_box(image, candidates[0]["box"])
-    return cropped_face, "ok"
+    return cropped_face, "ok", {
+        "box": candidates[0]["box"],
+        "image_shape": image.shape
+    }
+
+
+def validate_face_framing(face_info: dict) -> dict:
+    x, y, bw, bh = face_info["box"]
+    image_h, image_w = face_info["image_shape"][:2]
+
+    width_ratio = bw / max(image_w, 1)
+    height_ratio = bh / max(image_h, 1)
+    area_ratio = (bw * bh) / max(image_w * image_h, 1)
+
+    if bw < 60 or bh < 60:
+        return {
+            "ok": False,
+            "message": "Face is too small or too far away. Please reupload one clear front-facing human face."
+        }
+
+    if area_ratio < 0.008 and (width_ratio < 0.10 or height_ratio < 0.10):
+        return {
+            "ok": False,
+            "message": "Face is too small or too far away. Please reupload one clear front-facing human face."
+        }
+
+    touches_edge = (
+        x <= image_w * 0.015
+        or y <= image_h * 0.015
+        or x + bw >= image_w * 0.985
+        or y + bh >= image_h * 0.985
+    )
+    if touches_edge and (width_ratio > 0.82 or height_ratio > 0.82):
+        return {
+            "ok": False,
+            "message": "Face is too close or cropped. Please reupload one clear front-facing human face."
+        }
+
+    return {
+        "ok": True,
+        "message": "Face framing is acceptable."
+    }
 
 
 def validate_face_quality(face: np.ndarray) -> dict:
@@ -386,6 +427,7 @@ def validate_photo_likeness(face: np.ndarray) -> dict:
     gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
     brightness = gray.mean()
     contrast = gray.std()
+    overexposed_ratio = np.mean(gray > 245)
     local_detail = np.mean(
         np.abs(
             gray.astype(np.float32)
@@ -393,7 +435,13 @@ def validate_photo_likeness(face: np.ndarray) -> dict:
         )
     )
 
-    if brightness > 155 and contrast < 42 and local_detail < 7:
+    edges = cv2.Canny(gray, 50, 150)
+    edge_ratio = np.mean(edges > 0)
+
+    looks_smooth_generated = brightness > 155 and contrast < 42 and local_detail < 7
+    looks_line_art = overexposed_ratio > 0.25 and edge_ratio > 0.025 and local_detail < 18
+
+    if looks_smooth_generated or looks_line_art:
         return {
             "ok": False,
             "message": "Image appears to be a cartoon or stylized face. Please upload a real human face photo."
@@ -540,6 +588,49 @@ def validate_face_landmarks(face: np.ndarray) -> dict:
         "ok": True,
         "message": "Facial landmarks are clear.",
         "points": points
+    }
+
+
+def validate_human_face_proportions(points: np.ndarray) -> dict:
+    face_top, face_bottom, face_left, face_right = points[FACE_OVAL_LANDMARKS]
+    face_width = np.linalg.norm(face_left[:2] - face_right[:2])
+    face_height = np.linalg.norm(face_top[:2] - face_bottom[:2])
+
+    if face_width < 1 or face_height < 1:
+        return {
+            "ok": False,
+            "message": "Face proportions are not stable enough. Please upload a real human face photo."
+        }
+
+    eye_height_ratios = []
+    eye_width_ratios = []
+
+    for indexes in (LEFT_EYE_LANDMARKS, RIGHT_EYE_LANDMARKS):
+        outer, inner, upper, lower = points[indexes]
+        eye_width_ratios.append(np.linalg.norm(outer[:2] - inner[:2]) / face_width)
+        eye_height_ratios.append(np.linalg.norm(upper[:2] - lower[:2]) / face_height)
+
+    avg_eye_height_ratio = float(np.mean(eye_height_ratios))
+    avg_eye_width_ratio = float(np.mean(eye_width_ratios))
+    face_aspect_ratio = float(face_width / face_height)
+
+    # Oversized open eyes and rounded toy-like proportions are common in
+    # cartoons/avatars, but uncommon in real photos after face cropping.
+    if avg_eye_height_ratio > 0.075 and avg_eye_width_ratio > 0.21:
+        return {
+            "ok": False,
+            "message": "Image appears to be a cartoon or avatar face. Please upload a real human face photo."
+        }
+
+    if face_aspect_ratio > 0.95 and avg_eye_height_ratio > 0.055:
+        return {
+            "ok": False,
+            "message": "Image appears to be a stylized face. Please upload a real human face photo."
+        }
+
+    return {
+        "ok": True,
+        "message": "Face proportions appear human-like."
     }
 
 
@@ -737,7 +828,7 @@ async def predict(file: UploadFile = File(...)):
 
     img = np.array(img)
 
-    face, face_status = detect_face(img)
+    face, face_status, face_info = detect_face(img)
 
     if face_status == "no_face":
         lighting_result = validate_image_lighting(img)
@@ -752,17 +843,25 @@ async def predict(file: UploadFile = File(...)):
     if face_status == "side_face":
         raise HTTPException(status_code=400, detail="Side-profile face detected. Please upload a clear front-facing face.")
 
-    quality_result = validate_face_quality(face)
-    if not quality_result["ok"]:
-        raise HTTPException(status_code=400, detail=quality_result["message"])
+    framing_result = validate_face_framing(face_info)
+    if not framing_result["ok"]:
+        raise HTTPException(status_code=400, detail=framing_result["message"])
 
     photo_result = validate_photo_likeness(face)
     if not photo_result["ok"]:
         raise HTTPException(status_code=400, detail=photo_result["message"])
 
+    quality_result = validate_face_quality(face)
+    if not quality_result["ok"]:
+        raise HTTPException(status_code=400, detail=quality_result["message"])
+
     landmark_result = validate_face_landmarks(face)
     if not landmark_result["ok"]:
         raise HTTPException(status_code=400, detail=landmark_result["message"])
+
+    proportion_result = validate_human_face_proportions(landmark_result["points"])
+    if not proportion_result["ok"]:
+        raise HTTPException(status_code=400, detail=proportion_result["message"])
 
     landmark_stress_score = compute_landmark_stress_score(landmark_result["points"])
     landmark_probabilities = compute_landmark_emotion_probabilities(landmark_result["points"])
