@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Upload,
   Activity,
-  Brain,
-  TrendingUp,
   AlertCircle,
   CheckCircle,
   Camera,
@@ -14,11 +12,13 @@ import {
   Trash2,
   Sparkles,
   Heart,
-  Shield
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { CameraCapture } from './CameraCapture';
+import { StressResultCard } from './StressResultCard';
+import { AnalysisFeedbackCard } from './AnalysisFeedbackCard';
+import { getAnalysisFeedbackConfig, type AnalysisFeedbackConfig as ValidationFeedback } from '../lib/analysisFeedbackConfig';
 
 interface PredictionResult {
   predicted_emotion: string;
@@ -47,6 +47,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
   const [isLoading, setIsLoading] = useState(false);
   const [analysisStep, setAnalysisStep] = useState<AnalysisStep>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [validationFeedback, setValidationFeedback] = useState<ValidationFeedback | null>(null);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
@@ -56,6 +57,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
     const file = e.target.files?.[0];
     setError(null);
     setResult(null);
+    setValidationFeedback(null);
     setImageQuality(null);
 
     if (!file) {
@@ -76,6 +78,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
   const handleCameraCapture = (file: File) => {
     setError(null);
     setResult(null);
+    setValidationFeedback(null);
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setShowCamera(false);
@@ -92,11 +95,13 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
     setImageQuality(null);
     setError(null);
     setResult(null);
+    setValidationFeedback(null);
   };
 
   const handleUpload = async () => {
     setError(null);
     setResult(null);
+    setValidationFeedback(null);
 
     if (!selectedFile) {
       setError('Please select an image first.');
@@ -128,25 +133,25 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
         body: formData,
       });
 
-      const data = await response.json();
-
-      console.log('Response status:', response.status);
-      console.log('Response data:', data);
-
       if (!response.ok) {
-        throw new Error(data.detail || data.error || 'Analysis failed');
-      }
-
-      if (data.error) {
-        throw new Error(data.error);
+        let detail = '';
+        try {
+          const json = await response.json();
+          detail = json?.detail ?? json?.message ?? JSON.stringify(json);
+        } catch {
+          detail = await response.text().catch(() => '');
+        }
+        setValidationFeedback(getAnalysisFeedbackConfig(detail));
+        return;
       }
 
       setAnalysisStep('generating');
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      const data = await response.json();
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setValidationFeedback(getAnalysisFeedbackConfig(''));
     } finally {
       setIsLoading(false);
       setAnalysisStep('idle');
@@ -174,29 +179,6 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const capitalize = (text: string) => {
-    if (!text) return text;
-    return text.charAt(0).toUpperCase() + text.slice(1);
-  };
-
-  const getStressColor = (level?: string) => {
-    if (!level) return 'slate';
-
-    const lowerLevel = level.toLowerCase();
-    if (lowerLevel.includes('low')) return 'emerald';
-    if (lowerLevel.includes('medium') || lowerLevel.includes('moderate')) return 'amber';
-    if (lowerLevel.includes('high')) return 'rose';
-    return 'slate';
-  };
-
-  const getStressGradient = (level: string) => {
-    const color = getStressColor(level);
-    if (color === 'emerald') return 'from-emerald-500 to-emerald-600';
-    if (color === 'amber') return 'from-amber-500 to-amber-600';
-    if (color === 'rose') return 'from-rose-500 to-rose-600';
-    return 'from-slate-500 to-slate-600';
   };
 
   const getAnalysisStepText = (step: AnalysisStep) => {
@@ -248,7 +230,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
             </div>
           </div>
 
-          {!result && (
+          {!result && !validationFeedback && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
               <div className="lg:col-span-2 space-y-6">
                 <div className="bg-white rounded-2xl shadow-md border border-slate-200 p-8 animate-slideUp">
@@ -315,7 +297,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                           {imageQuality === 'good' && (
                             <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-slideDown">
                               <CheckCircle className="w-4 h-4" />
-                              <span className="text-sm font-semibold">Face detected</span>
+                              <span className="text-sm font-semibold">Ready to analyze</span>
                             </div>
                           )}
                         </div>
@@ -378,12 +360,6 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                     </div>
                   )}
 
-                  {error && (
-                    <div className="mt-6 p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3 animate-fadeIn">
-                      <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
-                      <p className="text-rose-700 text-sm">{error}</p>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -422,148 +398,30 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
             </div>
           )}
 
+          {validationFeedback && !result && (
+            <div className="py-4 animate-fadeIn">
+              <AnalysisFeedbackCard
+                emoji={validationFeedback.emoji}
+                title={validationFeedback.title}
+                message={validationFeedback.message}
+                tip={validationFeedback.tip}
+                onRetry={handleRemoveImage}
+                onBack={onBack}
+              />
+            </div>
+          )}
+
           {result && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
-                <div className="text-center mb-8">
-                  <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-cyan-100 to-teal-100 rounded-full mb-4">
-                    <CheckCircle className="w-10 h-10 text-cyan-600" />
-                  </div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">Analysis Complete</h2>
-                  <p className="text-slate-600">Here are your stress assessment results</p>
-                </div>
-
-                <div className={`bg-gradient-to-br ${getStressGradient(result.stress_level)} rounded-3xl p-8 mb-8 text-white shadow-2xl`}>
-                  <div className="text-center">
-                    <div className="text-sm font-semibold uppercase tracking-wider mb-2 opacity-90">
-                      Your Stress Score
-                    </div>
-                    <div className="text-7xl font-bold mb-3">
-                      {result.stress_score}
-                    </div>
-                    <div className="inline-flex items-center gap-2 bg-white bg-opacity-20 px-6 py-3 rounded-full backdrop-blur-sm">
-                      <TrendingUp className="w-5 h-5" />
-                      <span className="text-lg font-semibold">{result.stress_level}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                  <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-2xl p-6 border border-cyan-200">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 bg-cyan-600 rounded-xl flex items-center justify-center">
-                        <Activity className="w-5 h-5 text-white" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-cyan-700">Primary Emotion</div>
-                        <div className="text-2xl font-bold text-slate-800">
-                          {capitalize(result.predicted_emotion)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-2xl p-6 border border-teal-200">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 bg-teal-600 rounded-xl flex items-center justify-center">
-                        <Brain className="w-5 h-5 text-white" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-teal-700">Top Predictions</div>
-                        <div className="text-sm text-slate-700 mt-1">
-                          {result.top_2_predictions?.map((pred, index) => (
-                            <div key={index}>
-                              {capitalize(pred.emotion)} <span className="text-slate-500">({pred.probability})</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mb-8">
-                  <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <Activity className="w-6 h-6 text-cyan-600" />
-                    Emotional Profile
-                  </h3>
-                  <div className="space-y-4">
-                    {result.probabilities && Object.entries(result.probabilities)
-                      .sort(([, a], [, b]) => Number(b) - Number(a))
-                      .map(([emotion, value]) => {
-                        const percentage = Number(value) * 100;
-                        return (
-                          <div key={emotion} className="group">
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="font-semibold text-slate-700">{capitalize(emotion)}</span>
-                              <span className="text-cyan-600 font-bold">{percentage.toFixed(1)}%</span>
-                            </div>
-                            <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-cyan-500 to-teal-500 rounded-full transition-all duration-1000 ease-out"
-                                style={{ width: `${percentage}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-
-                {result.suggestion && (
-                  <div className="mb-8">
-                    <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                      <Lightbulb className="w-6 h-6 text-amber-500" />
-                      Personalized Recommendations
-                    </h3>
-                    <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 rounded-2xl p-6 border border-amber-200">
-                      <h4 className="font-bold text-amber-900 mb-4 text-lg flex items-center gap-2">
-                        <Sparkles className="w-5 h-5" />
-                        {result.suggestion.title}
-                      </h4>
-                      <ul className="space-y-3">
-                        {result.suggestion.advice.map((advice, index) => (
-                          <li key={index} className="flex items-start gap-3 text-slate-700">
-                            <div className="w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                              <span className="text-white text-xs font-bold">{index + 1}</span>
-                            </div>
-                            <span className="leading-relaxed">{advice}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-4">
-                  <button
-                    onClick={() => {
-                      setResult(null);
-                      handleRemoveImage();
-                    }}
-                    className="px-8 py-4 border-2 border-slate-300 text-slate-700 rounded-xl font-semibold hover:bg-slate-50 hover:border-slate-400 transition-all duration-300"
-                  >
-                    New Analysis
-                  </button>
-                  <button
-                    onClick={handleSaveResult}
-                    disabled={isSaving}
-                    className="flex-1 bg-gradient-to-r from-cyan-600 to-teal-600 text-white py-4 rounded-xl font-semibold text-lg hover:from-cyan-700 hover:to-teal-700 hover:shadow-xl disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed transition-all duration-300 flex items-center justify-center gap-2"
-                  >
-                    {isSaving ? (
-                      <>
-                        <Activity className="w-5 h-5 animate-spin" />
-                        Saving to Profile...
-                      </>
-                    ) : (
-                      <>
-                        <Heart className="w-5 h-5" />
-                        Save to My Profile
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+            <div className="py-4 animate-fadeIn">
+              <StressResultCard
+                result={result}
+                isSaving={isSaving}
+                onSave={handleSaveResult}
+                onReset={() => {
+                  setResult(null);
+                  handleRemoveImage();
+                }}
+              />
             </div>
           )}
         </div>
@@ -571,3 +429,4 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
     </>
   );
 }
+

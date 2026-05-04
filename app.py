@@ -5,15 +5,16 @@ import numpy as np
 import torch
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
+from PIL import Image, ImageOps
 from torchvision import transforms
 
 import os
 import json
-from google import genai
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 from models.resnet import ResNet18
+from models.senet import SENet18
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 
@@ -32,7 +33,7 @@ app.add_middleware(
 load_dotenv()
 
 # Gemini client will automatically read GEMINI_API_KEY from environment
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 emotions = [
     "angry",
@@ -55,7 +56,7 @@ stress_weights = {
 }
 
 # load model
-model = ResNet18()
+model = SENet18()
 checkpoint = torch.load("best_checkpoint.tar", map_location="cpu")
 model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
@@ -73,66 +74,87 @@ face_detector = mp_face_detection.FaceDetection(
     min_detection_confidence=0.65
 )
 
-def detect_face(image: np.ndarray):
+def detect_and_crop_face(image: np.ndarray):
     h, w = image.shape[:2]
 
     if max(h, w) > 800:
         scale = 800 / max(h, w)
-        image = cv2.resize(image, (int(w * scale), int(h * scale)))
-        h, w = image.shape[:2]
+        work_img = cv2.resize(image, (int(w * scale), int(h * scale)))
+    else:
+        work_img = image.copy()
 
-    results = face_detector.process(image)
+    wh, ww = work_img.shape[:2]
+    results = face_detector.process(work_img)
 
     if not results.detections:
         return None, "no_face"
 
-    boxes = []
-
+    valid = []
     for det in results.detections:
         bbox = det.location_data.relative_bounding_box
+        x = int(bbox.xmin * ww)
+        y = int(bbox.ymin * wh)
+        bw = int(bbox.width * ww)
+        bh = int(bbox.height * wh)
 
-        x = int(bbox.xmin * w)
-        y = int(bbox.ymin * h)
-        bw = int(bbox.width * w)
-        bh = int(bbox.height * h)
-
-        # Ignore invalid / tiny detections
         if bw < 60 or bh < 60:
             continue
 
-        # Clamp to image bounds
         x = max(0, x)
         y = max(0, y)
-        bw = min(bw, w - x)
-        bh = min(bh, h - y)
+        bw = min(bw, ww - x)
+        bh = min(bh, wh - y)
 
         if bw > 0 and bh > 0:
-            boxes.append((x, y, bw, bh))
+            valid.append((bw * bh, x, y, bw, bh, det))
 
-    if len(boxes) == 0:
+    if not valid:
         return None, "no_face"
 
-    # Sort by area, largest first
-    boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
+    valid.sort(reverse=True)
 
-    # Reject only if second face is also large enough
-    if len(boxes) > 1:
-        largest_area = boxes[0][2] * boxes[0][3]
-        second_area = boxes[1][2] * boxes[1][3]
+    if len(valid) > 1 and valid[1][0] > 0.6 * valid[0][0]:
+        return None, "multiple_faces"
 
-        if second_area > 0.6 * largest_area:
-            return None, "multiple_faces"
+    _, x, y, bw, bh, best_det = valid[0]
 
-    x, y, bw, bh = boxes[0]
+    # Align face so eyes are level using FaceDetection eye keypoints
+    kps = best_det.location_data.relative_keypoints
+    rx, ry = kps[0].x * ww, kps[0].y * wh  # right eye
+    lx, ly = kps[1].x * ww, kps[1].y * wh  # left eye
+    angle = np.degrees(np.arctan2(ly - ry, lx - rx))
+
+    if abs(angle) > 2.0:
+        eye_cx, eye_cy = (rx + lx) / 2, (ry + ly) / 2
+        M = cv2.getRotationMatrix2D((eye_cx, eye_cy), angle, 1.0)
+        work_img = cv2.warpAffine(
+            work_img, M, (ww, wh),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT_101
+        )
 
     margin = 0.18
     x1 = max(0, int(x - bw * margin))
     y1 = max(0, int(y - bh * margin))
-    x2 = min(w, int(x + bw * (1 + margin)))
-    y2 = min(h, int(y + bh * (1 + margin)))
+    x2 = min(ww, int(x + bw * (1 + margin)))
+    y2 = min(wh, int(y + bh * (1 + margin)))
 
-    cropped_face = image[y1:y2, x1:x2]
-    return cropped_face, "ok"
+    crop = work_img[y1:y2, x1:x2]
+
+    # Pad to square before resize to avoid aspect-ratio distortion
+    ch, cw = crop.shape[:2]
+    if ch != cw:
+        side = max(ch, cw)
+        pad_top = (side - ch) // 2
+        pad_bot = side - ch - pad_top
+        pad_left = (side - cw) // 2
+        pad_right = side - cw - pad_left
+        crop = cv2.copyMakeBorder(
+            crop, pad_top, pad_bot, pad_left, pad_right,
+            cv2.BORDER_REFLECT_101
+        )
+
+    return crop, "ok"
 
 
 def validate_face_quality(face: np.ndarray) -> dict:
@@ -223,7 +245,7 @@ Rules:
 """
 
     try:
-        response = gemini_client.models.generate_content(
+        response = genai.models.generate_content(
             model="gemini-3-flash-preview",
             contents=prompt
         )
@@ -257,13 +279,15 @@ async def predict(file: UploadFile = File(...)):
     contents = await file.read()
 
     try:
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        img = Image.open(io.BytesIO(contents))
+        img = ImageOps.exif_transpose(img)  # fix phone/camera rotation
+        img = img.convert("RGB")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
     img = np.array(img)
 
-    face, face_status = detect_face(img)
+    face, face_status = detect_and_crop_face(img)
 
     if face_status == "no_face":
          raise HTTPException(status_code=400, detail="No face detected. Please upload an image with one clear visible face.")
@@ -277,8 +301,8 @@ async def predict(file: UploadFile = File(...)):
 
     face = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
 
-    # improve contrast
-    face = cv2.equalizeHist(face)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    face = clahe.apply(face)
 
     face = Image.fromarray(face)
 
