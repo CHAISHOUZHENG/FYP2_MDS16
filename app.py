@@ -88,23 +88,8 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     if not results.multi_face_landmarks:
         return False, "no_face"
 
-    h, w = image.shape[:2]
     landmarks = results.multi_face_landmarks[0].landmark
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
-    def crop_region(indices, padding=8):
-        xs = [int(landmarks[i].x * w) for i in indices]
-        ys = [int(landmarks[i].y * h) for i in indices]
-
-        x1 = max(min(xs) - padding, 0)
-        y1 = max(min(ys) - padding, 0)
-        x2 = min(max(xs) + padding, w)
-        y2 = min(max(ys) + padding, h)
-
-        if x2 <= x1 or y2 <= y1:
-            return None
-
-        return gray[y1:y2, x1:x2]
 
     # --- Frontality check ---
     # Nose tip should be roughly centered between both eyes
@@ -147,102 +132,143 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     if nose_tip_lm.x < 0 or nose_tip_lm.x > 1 or nose_tip_lm.y < 0 or nose_tip_lm.y > 1:
         print(f"[DEBUG OBSTRUCTION] REJECTED — nose not visible")
         return False, "face_obstructed"
+    
 
-    # --- Mouth check ---
-    mouth_idx = [61, 291, 13, 14, 78, 308, 82, 312]
-    mouth = crop_region(mouth_idx, padding=12)
+    # --- Full face exposure check using landmark positions ---
+    key_landmarks = {
+        "forehead": 10,
+        "left_eye": 33,
+        "right_eye": 263,
+        "nose_tip": 4,
+        "left_cheek": 234,
+        "right_cheek": 454,
+        "mouth_center": 13,
+        "chin": 152,
+    }
 
-    if mouth is None:
+    outside_points = []
+
+    for region, idx in key_landmarks.items():
+        lm = landmarks[idx]
+
+        print(
+            f"[DEBUG OBSTRUCTION] {region} coords: "
+            f"x={lm.x:.4f}, y={lm.y:.4f}"
+        )
+
+        if lm.x < 0 or lm.x > 1 or lm.y < 0 or lm.y > 1:
+            outside_points.append(region)
+
+    critical_regions = ["left_eye", "right_eye", "nose_tip", "mouth_center"]
+
+    missing_critical = [
+        region for region in outside_points
+        if region in critical_regions
+    ]
+
+    if len(missing_critical) >= 1:
         return False, "face_obstructed"
     
-    # 2. Mask / mouth covered check using texture
-    mouth_texture = cv2.Laplacian(mouth, cv2.CV_64F).var()
 
-    if mouth_texture < 8:
+    # --- Mouth visibility / mask check ---
+    h, w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+    mouth_indices = [61, 291, 13, 14, 78, 308, 82, 312]
+
+    xs = [int(landmarks[i].x * w) for i in mouth_indices]
+    ys = [int(landmarks[i].y * h) for i in mouth_indices]
+
+    x1 = max(min(xs) - 12, 0)
+    y1 = max(min(ys) - 12, 0)
+    x2 = min(max(xs) + 12, w)
+    y2 = min(max(ys) + 12, h)
+
+    if x2 <= x1 or y2 <= y1:
         return False, "face_obstructed"
 
-    # 3. Mouth area too dark / unclear
+    mouth = gray[y1:y2, x1:x2]
+
+    mouth_texture = cv2.Laplacian(mouth, cv2.CV_64F).var()
     mouth_brightness = mouth.mean()
 
-    if mouth_brightness < 35 or mouth_brightness > 225:
+    print(f"[DEBUG OBSTRUCTION] Mouth texture: {mouth_texture:.2f}")
+    print(f"[DEBUG OBSTRUCTION] Mouth brightness: {mouth_brightness:.2f}")
+
+    if mouth_texture < 8 and (mouth_brightness < 45 or mouth_brightness > 220):
+        print("[DEBUG OBSTRUCTION] REJECTED — possible mask or mouth obstruction")
         return False, "face_obstructed"
 
-    return True, "ok"
+
+    # --- Extreme sunglasses / eye obstruction check ---
+
+    def crop_eye(indices, padding=8):
+        xs = [int(landmarks[i].x * w) for i in indices]
+        ys = [int(landmarks[i].y * h) for i in indices]
+
+        x1 = max(min(xs) - padding, 0)
+        y1 = max(min(ys) - padding, 0)
+        x2 = min(max(xs) + padding, w)
+        y2 = min(max(ys) + padding, h)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        return gray[y1:y2, x1:x2]
+
+    left_eye = crop_eye([33, 133, 159, 145])
+    right_eye = crop_eye([362, 263, 386, 374])
+
+    if left_eye is None or right_eye is None:
+        return False, "face_obstructed"
+
+    left_eye_brightness = left_eye.mean()
+    right_eye_brightness = right_eye.mean()
+
+    left_eye_texture = cv2.Laplacian(left_eye, cv2.CV_64F).var()
+    right_eye_texture = cv2.Laplacian(right_eye, cv2.CV_64F).var()
+
+    print(f"[DEBUG OBSTRUCTION] Left eye brightness: {left_eye_brightness:.2f}")
+    print(f"[DEBUG OBSTRUCTION] Right eye brightness: {right_eye_brightness:.2f}")
+    print(f"[DEBUG OBSTRUCTION] Left eye texture: {left_eye_texture:.2f}")
+    print(f"[DEBUG OBSTRUCTION] Right eye texture: {right_eye_texture:.2f}")
 
 
-def validate_real_face(image: np.ndarray, bbox_x: int, bbox_y: int, bbox_w: int, bbox_h: int) -> tuple[bool, str]:
-    x1 = max(0, bbox_x)
-    y1 = max(0, bbox_y)
-    x2 = min(image.shape[1], bbox_x + bbox_w)
-    y2 = min(image.shape[0], bbox_y + bbox_h)
+    # --- One-side obstruction check (hand / object covering face) ---
+    eye_brightness_diff = abs(left_eye_brightness - right_eye_brightness)
 
-    face_crop = image[y1:y2, x1:x2]
-
-    if face_crop.size == 0:
-        return False, "no_face"
-
-    gray = cv2.cvtColor(face_crop, cv2.COLOR_RGB2GRAY)
-    hsv = cv2.cvtColor(face_crop, cv2.COLOR_RGB2HSV)
-
-    small = cv2.resize(face_crop, (120, 120))
-    small_gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
-    small_hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
-
-    # 1. Colour simplification
-    quantized = small // 16
-    unique_colors = len(np.unique(quantized.reshape(-1, 3), axis=0))
-
-    # 2. Dominant colour / flat region
-    colors, counts = np.unique(quantized.reshape(-1, 3), axis=0, return_counts=True)
-    dominant_ratio = counts.max() / counts.sum()
-
-    # 3. Black outline ratio
-    black_ratio = np.mean(small_gray < 35)
-
-    # 4. Edge density
-    edges = cv2.Canny(small_gray, 80, 160)
-    edge_density = np.mean(edges > 0)
-
-    # 5. Saturation
-    saturation = small_hsv[:, :, 1].mean()
-
-    # 6. Texture
-    texture = cv2.Laplacian(small_gray, cv2.CV_64F).var()
-
-    print(
-        f"[DEBUG REAL FACE] unique_colors={unique_colors}, "
-        f"dominant_ratio={dominant_ratio:.4f}, "
-        f"black_ratio={black_ratio:.4f}, "
-        f"edge_density={edge_density:.4f}, "
-        f"saturation={saturation:.2f}, "
-        f"texture={texture:.2f}"
+    eye_texture_ratio = max(left_eye_texture, right_eye_texture) / max(
+        1,
+        min(left_eye_texture, right_eye_texture)
     )
 
-    cartoon_score = 0
+    print(f"[DEBUG OBSTRUCTION] Eye brightness diff: {eye_brightness_diff:.2f}")
+    print(f"[DEBUG OBSTRUCTION] Eye texture ratio: {eye_texture_ratio:.2f}")
 
-    if unique_colors < 180:
-        cartoon_score += 1
+    if eye_brightness_diff > 50 or eye_texture_ratio > 4:
+        print("[DEBUG OBSTRUCTION] REJECTED — possible hand/object covering one side of face")
+        return False, "face_obstructed"
 
-    if dominant_ratio > 0.25:
-        cartoon_score += 1
 
-    if black_ratio > 0.08:
-        cartoon_score += 1
+    # Case 1 — dark non-reflective lenses: low brightness AND low texture
+    if (
+        left_eye_brightness < 65 and
+        right_eye_brightness < 65 and
+        left_eye_texture < 35 and
+        right_eye_texture < 35
+    ):
+        print("[DEBUG OBSTRUCTION] REJECTED — dark non-reflective sunglasses")
+        return False, "face_obstructed"
 
-    if edge_density > 0.035 and black_ratio > 0.04:
-        cartoon_score += 1
-
-    if saturation > 130 and unique_colors < 220:
-        cartoon_score += 1
-
-    if texture > 500 and black_ratio > 0.05:
-        cartoon_score += 1
-
-    if cartoon_score >= 2:
-        print(f"[DEBUG REAL FACE] REJECTED — likely cartoon, score={cartoon_score}")
-        return False, "cartoon_detected"
-
-    return True, "ok"
+    # Case 2 — reflective lenses: very low brightness regardless of texture
+    if (
+        left_eye_brightness < 40 or 
+        right_eye_brightness < 40
+    ):
+        print("[DEBUG OBSTRUCTION] REJECTED — very dark or reflective sunglasses")
+        return False, "face_obstructed"
+        
+    return True, "ok" 
 
 
 def detect_and_crop_face(image: np.ndarray):
@@ -262,11 +288,11 @@ def detect_and_crop_face(image: np.ndarray):
 
     if not results.detections:
         print("[DEBUG] REJECTED — no detections at all")
-        return None, "no_face"
+        return None, None, "no_face"  
     
     if len(results.detections) > 1:
         print(f"[DEBUG] REJECTED — multiple faces detected: {len(results.detections)}")
-        return None, "multiple_faces"
+        return None, None, "multiple_faces"
     
     det = results.detections[0]
 
@@ -274,7 +300,7 @@ def detect_and_crop_face(image: np.ndarray):
     print(f"[DEBUG] Confidence score: {confidence:.4f}")
     if confidence < 0.65:
         print(f"[DEBUG] REJECTED — confidence too low: {confidence:.4f}")
-        return None, "low_confidence"
+        return None, None, "low_confidence"
 
     bbox = det.location_data.relative_bounding_box
     x = int(bbox.xmin * ww)
@@ -284,18 +310,13 @@ def detect_and_crop_face(image: np.ndarray):
 
     # Reject if face is too small
     if bw < 80 or bh < 80:
-        return None, "no_face"
+        return None, None, "no_face" 
 
     # Reject if face area is less than 3% of total image — too far away
     face_area_ratio = (bw * bh) / (ww * wh)
     if face_area_ratio < 0.03:
-        return None, "too_far"
+        return None, None, "too_far"
 
-    # Reject cartoon / illustrated / drawn faces
-    real_ok, real_status = validate_real_face(work_img, x, y, bw, bh)
-    print(f"[DEBUG] Real face check — ok={real_ok}, status={real_status}")
-    if not real_ok:
-        return None, real_status
 
     x1 = x
     y1 = y
@@ -315,9 +336,15 @@ def detect_and_crop_face(image: np.ndarray):
 
     print(f"[DEBUG] Overflow pixels — left={overflow_left}, top={overflow_top}, right={overflow_right}, bottom={overflow_bottom}")
 
-    if overflow_left > 5 or overflow_top > 5 or overflow_right > 5 or overflow_bottom > 5:
-        print(f"[DEBUG] REJECTED — face genuinely cut off at edges")
-        return None, "face_cut_off"
+    tolerance = max(5, int(0.03 * min(ww, wh)))
+
+    if (
+        overflow_left > tolerance or
+        overflow_top > tolerance or
+        overflow_right > tolerance or
+        overflow_bottom > tolerance
+    ):
+        return None, None, "face_cut_off"
 
     # Clamp coordinates to image boundaries
     x1 = max(0, x1)
@@ -335,7 +362,7 @@ def detect_and_crop_face(image: np.ndarray):
 
     if abs(angle) > 45:
         print(f"[DEBUG] REJECTED — head rotated too much: {angle:.2f}°")
-        return None, "face_rotated"
+        return None, None, "face_rotated"
 
     # Correct small tilt BEFORE cropping
     if abs(angle) > 2.0:
@@ -364,7 +391,7 @@ def detect_and_crop_face(image: np.ndarray):
         )
 
     print(f"[DEBUG] Crop size: {crop.shape[1]}x{crop.shape[0]}")
-    return crop, "ok"
+    return crop, work_img, "ok"
 
 
 def detect_and_crop_face_retina(image: np.ndarray):
@@ -385,13 +412,13 @@ def detect_and_crop_face_retina(image: np.ndarray):
         detections = RetinaFace.detect_faces(bgr_img)
     except Exception as e:
         print("[RETINA ERROR]", str(e))
-        return None, "no_face"
+        return None, None, "no_face" 
 
     if not isinstance(detections, dict) or len(detections) == 0:
-        return None, "no_face"
+        return None, None, "no_face" 
 
     if len(detections) > 1:
-        return None, "multiple_faces"
+        return None, None, "multiple_faces"
 
     det = list(detections.values())[0]
 
@@ -399,7 +426,7 @@ def detect_and_crop_face_retina(image: np.ndarray):
     print(f"[RETINA] Confidence: {confidence:.4f}")
 
     if confidence < 0.80:
-        return None, "low_confidence"
+        return None, None, "low_confidence"
 
     x1, y1, x2, y2 = det["facial_area"]
 
@@ -407,27 +434,22 @@ def detect_and_crop_face_retina(image: np.ndarray):
     bh = y2 - y1
 
     if bw < 80 or bh < 80:
-        return None, "no_face"
+        return None, None, "no_face"
 
     face_area_ratio = (bw * bh) / (ww * wh)
     if face_area_ratio < 0.03:
-        return None, "too_far"
+        return None, None, "too_far"
 
     # Check if face is cut off
     tolerance = max(5, int(0.03 * min(ww, wh)))
 
     if x1 < -tolerance or y1 < -tolerance or x2 > ww + tolerance or y2 > wh + tolerance:
-        return None, "face_cut_off"
+        return None, None, "face_cut_off"
 
     x1 = max(0, x1)
     y1 = max(0, y1)
     x2 = min(ww, x2)
     y2 = min(wh, y2)
-
-    # Cartoon / fake face check
-    real_ok, real_status = validate_real_face(work_img, x1, y1, bw, bh)
-    if not real_ok:
-        return None, real_status
 
 
     # Head rotation using RetinaFace eye landmarks
@@ -440,7 +462,7 @@ def detect_and_crop_face_retina(image: np.ndarray):
         print(f"[RETINA] Head rotation angle: {angle:.2f}°")
 
         if abs(angle) > 45:
-            return None, "face_rotated"
+            return None, None, "face_rotated"
 
         if abs(angle) > 2.0:
             eye_cx, eye_cy = (rx + lx) / 2, (ry + ly) / 2
@@ -473,7 +495,31 @@ def detect_and_crop_face_retina(image: np.ndarray):
         )
 
     print(f"[RETINA] Crop size: {crop.shape[1]}x{crop.shape[0]}")
-    return crop, "ok"
+    return crop, work_img, "ok"
+
+
+def validate_face_crop_completeness(face: np.ndarray) -> tuple[bool, str]:
+    gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
+
+    h, w = gray.shape
+    top = gray[:h // 3, :]
+    middle = gray[h // 3: 2 * h // 3, :]
+    bottom = gray[2 * h // 3:, :]
+
+    top_texture = cv2.Laplacian(top, cv2.CV_64F).var()
+    middle_texture = cv2.Laplacian(middle, cv2.CV_64F).var()
+    bottom_texture = cv2.Laplacian(bottom, cv2.CV_64F).var()
+
+    print(f"[DEBUG COMPLETE] top texture: {top_texture:.2f}")
+    print(f"[DEBUG COMPLETE] middle texture: {middle_texture:.2f}")
+    print(f"[DEBUG COMPLETE] bottom texture: {bottom_texture:.2f}")
+
+    # If crop only contains eyes/mouth from a screen/phone, one region is often missing/flat
+    if top_texture < 10 or middle_texture < 10 or bottom_texture < 10:
+        print("[DEBUG COMPLETE] REJECTED — incomplete face crop")
+        return False, "face_obstructed"
+
+    return True, "ok"
 
 
 def validate_face_quality(face: np.ndarray) -> dict:
@@ -493,16 +539,17 @@ def validate_face_quality(face: np.ndarray) -> dict:
 
     # 2. Brightness check
     brightness = gray.mean()
+    contrast = gray.std()
     print(f"[DEBUG QUALITY] Brightness: {brightness:.2f}")
 
-    if brightness < 40:
+    if brightness < 35 and contrast < 25:
         print(f"[DEBUG QUALITY] REJECTED — too dark: {brightness:.2f}")
         return {
             "ok": False,
             "message": "Image is too dark. Please upload an image with better lighting."
         }
 
-    if brightness > 220:
+    if brightness > 225 and contrast < 20:
         return {
             "ok": False,
             "message": "Image is too bright. Please upload an image with better lighting."
@@ -523,7 +570,6 @@ def validate_face_quality(face: np.ndarray) -> dict:
         }
 
     # 4. Contrast check
-    contrast = gray.std()
     print(f"[DEBUG QUALITY] Contrast: {contrast:.2f}")
 
     if contrast < 20:
@@ -694,17 +740,9 @@ async def predict(file: UploadFile = File(...)):
     
     # 3. Face detection
     t0 = time.perf_counter()
-    face, face_status = detect_and_crop_face(img)
+    face, check_img, face_status = detect_and_crop_face(img)
     print("[FACE STATUS - MEDIAPIPE]", face_status)
     print(f"[TIME] mediapipe_detect_face: {time.perf_counter() - t0:.4f}s")
-
-    # RetinaFace fallback only when MediaPipe fails to find a reliable face
-    if face_status in ["no_face", "low_confidence", "face_cut_off"]:
-        retina_t0 = time.perf_counter()
-        print("[INFO] MediaPipe failed. Trying RetinaFace fallback...")
-        face, face_status = detect_and_crop_face_retina(img)
-        print("[FACE STATUS - RETINAFACE]", face_status)
-        print(f"[TIME] retinaface_detect_face: {time.perf_counter() - retina_t0:.4f}s")
 
     print(f"[TIME] total_detect_face: {time.perf_counter() - t0:.4f}s")
 
@@ -712,14 +750,6 @@ async def predict(file: UploadFile = File(...)):
     # Run facial obstruction validation only once after final detector result
     if face_status == "ok":
         obstruction_t0 = time.perf_counter()
-
-        # Resize full image consistently — same logic used inside both detectors
-        h_orig, w_orig = img.shape[:2]
-        if max(h_orig, w_orig) > 800:
-            scale = 800 / max(h_orig, w_orig)
-            check_img = cv2.resize(img, (int(w_orig * scale), int(h_orig * scale)))
-        else:
-            check_img = img.copy()
 
         # Pass full resized image, NOT the face crop
         obstruction_ok, obstruction_status = validate_facial_obstruction(check_img)
@@ -729,9 +759,21 @@ async def predict(file: UploadFile = File(...)):
 
         if not obstruction_ok:
             face_status = obstruction_status
+
+        
+        # --- Face completeness validation ---
+    if face_status == "ok":
+        complete_ok, complete_status = validate_face_crop_completeness(face)
+
+        print(
+            f"[DEBUG] Face completeness — "
+            f"ok={complete_ok}, status={complete_status}"
+        )
+
+        if not complete_ok:
+            face_status = complete_status
         
     
-
     face_error_messages = {
         "no_face": "No face detected. Please upload a clear photo with your full face visible.",
         "multiple_faces": "Multiple people detected. Please upload an image with only one person.",
@@ -743,7 +785,6 @@ async def predict(file: UploadFile = File(...)):
         "face_rotated": "Your head is tilted too much. Please face the camera directly.",
         "eyes_closed": "Your eyes appear to be closed. Please keep your eyes open and facing the camera.",
         "face_not_frontal": "Please face the camera directly. Your face appears to be turned to the side.",
-        "cartoon_detected": "This appears to be an illustrated or cartoon image. Please upload a real photo of your face.",
     }
 
     if face_status in face_error_messages:
