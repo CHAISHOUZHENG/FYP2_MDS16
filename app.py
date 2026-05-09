@@ -1,5 +1,5 @@
 import io
-
+import time
 import cv2
 import numpy as np
 import torch
@@ -7,18 +7,17 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps
 from torchvision import transforms
-
 import os
 import json
 import google.generativeai as genai
 from dotenv import load_dotenv
-
-from models.resnet import ResNet18
 from models.senet import SENet18
+import re
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-
 import mediapipe as mp
+
+from retinaface import RetinaFace
 
 app = FastAPI()
 
@@ -71,8 +70,180 @@ transform = transforms.Compose([
 mp_face_detection = mp.solutions.face_detection
 face_detector = mp_face_detection.FaceDetection(
     model_selection=1,
-    min_detection_confidence=0.65
+    min_detection_confidence=0.6
 )
+
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=True,
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5
+)
+
+
+def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
+    results = face_mesh.process(image)
+
+    if not results.multi_face_landmarks:
+        return False, "no_face"
+
+    h, w = image.shape[:2]
+    landmarks = results.multi_face_landmarks[0].landmark
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+    def crop_region(indices, padding=8):
+        xs = [int(landmarks[i].x * w) for i in indices]
+        ys = [int(landmarks[i].y * h) for i in indices]
+
+        x1 = max(min(xs) - padding, 0)
+        y1 = max(min(ys) - padding, 0)
+        x2 = min(max(xs) + padding, w)
+        y2 = min(max(ys) + padding, h)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        return gray[y1:y2, x1:x2]
+
+    # --- Frontality check ---
+    # Nose tip should be roughly centered between both eyes
+    nose_tip = landmarks[4]
+    left_eye_outer = landmarks[33]
+    right_eye_outer = landmarks[263]
+
+    eye_center_x = (left_eye_outer.x + right_eye_outer.x) / 2
+    nose_offset = abs(nose_tip.x - eye_center_x)
+
+    print(f"[DEBUG OBSTRUCTION] Nose offset from eye center: {nose_offset:.4f}")
+    if nose_offset > 0.12:
+        print(f"[DEBUG OBSTRUCTION] REJECTED — face not frontal: {nose_offset:.4f}")
+        return False, "face_not_frontal"
+
+    # --- Eye openness check ---
+    # Eye aspect ratio: vertical distance / horizontal distance
+    # If EAR is too low, eyes are closed
+    def eye_aspect_ratio(top_idx, bottom_idx, left_idx, right_idx):
+        top = landmarks[top_idx]
+        bottom = landmarks[bottom_idx]
+        left = landmarks[left_idx]
+        right = landmarks[right_idx]
+        vertical = abs(top.y - bottom.y)
+        horizontal = abs(left.x - right.x)
+        if horizontal == 0:
+            return 0
+        return vertical / horizontal
+
+    left_ear = eye_aspect_ratio(159, 145, 33, 133)
+    right_ear = eye_aspect_ratio(386, 374, 362, 263)
+
+    print(f"[DEBUG OBSTRUCTION] Left EAR: {left_ear:.4f}, Right EAR: {right_ear:.4f}")
+    if left_ear < 0.05 and right_ear < 0.05:
+        print(f"[DEBUG OBSTRUCTION] REJECTED — both eyes closed")
+        return False, "eyes_closed"
+
+    # --- Nose visibility check ---
+    nose_tip_lm = landmarks[4]
+    if nose_tip_lm.x < 0 or nose_tip_lm.x > 1 or nose_tip_lm.y < 0 or nose_tip_lm.y > 1:
+        print(f"[DEBUG OBSTRUCTION] REJECTED — nose not visible")
+        return False, "face_obstructed"
+
+    # --- Mouth check ---
+    mouth_idx = [61, 291, 13, 14, 78, 308, 82, 312]
+    mouth = crop_region(mouth_idx, padding=12)
+
+    if mouth is None:
+        return False, "face_obstructed"
+    
+    # 2. Mask / mouth covered check using texture
+    mouth_texture = cv2.Laplacian(mouth, cv2.CV_64F).var()
+
+    if mouth_texture < 8:
+        return False, "face_obstructed"
+
+    # 3. Mouth area too dark / unclear
+    mouth_brightness = mouth.mean()
+
+    if mouth_brightness < 35 or mouth_brightness > 225:
+        return False, "face_obstructed"
+
+    return True, "ok"
+
+
+def validate_real_face(image: np.ndarray, bbox_x: int, bbox_y: int, bbox_w: int, bbox_h: int) -> tuple[bool, str]:
+    x1 = max(0, bbox_x)
+    y1 = max(0, bbox_y)
+    x2 = min(image.shape[1], bbox_x + bbox_w)
+    y2 = min(image.shape[0], bbox_y + bbox_h)
+
+    face_crop = image[y1:y2, x1:x2]
+
+    if face_crop.size == 0:
+        return False, "no_face"
+
+    gray = cv2.cvtColor(face_crop, cv2.COLOR_RGB2GRAY)
+    hsv = cv2.cvtColor(face_crop, cv2.COLOR_RGB2HSV)
+
+    small = cv2.resize(face_crop, (120, 120))
+    small_gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    small_hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
+
+    # 1. Colour simplification
+    quantized = small // 16
+    unique_colors = len(np.unique(quantized.reshape(-1, 3), axis=0))
+
+    # 2. Dominant colour / flat region
+    colors, counts = np.unique(quantized.reshape(-1, 3), axis=0, return_counts=True)
+    dominant_ratio = counts.max() / counts.sum()
+
+    # 3. Black outline ratio
+    black_ratio = np.mean(small_gray < 35)
+
+    # 4. Edge density
+    edges = cv2.Canny(small_gray, 80, 160)
+    edge_density = np.mean(edges > 0)
+
+    # 5. Saturation
+    saturation = small_hsv[:, :, 1].mean()
+
+    # 6. Texture
+    texture = cv2.Laplacian(small_gray, cv2.CV_64F).var()
+
+    print(
+        f"[DEBUG REAL FACE] unique_colors={unique_colors}, "
+        f"dominant_ratio={dominant_ratio:.4f}, "
+        f"black_ratio={black_ratio:.4f}, "
+        f"edge_density={edge_density:.4f}, "
+        f"saturation={saturation:.2f}, "
+        f"texture={texture:.2f}"
+    )
+
+    cartoon_score = 0
+
+    if unique_colors < 180:
+        cartoon_score += 1
+
+    if dominant_ratio > 0.25:
+        cartoon_score += 1
+
+    if black_ratio > 0.08:
+        cartoon_score += 1
+
+    if edge_density > 0.035 and black_ratio > 0.04:
+        cartoon_score += 1
+
+    if saturation > 130 and unique_colors < 220:
+        cartoon_score += 1
+
+    if texture > 500 and black_ratio > 0.05:
+        cartoon_score += 1
+
+    if cartoon_score >= 2:
+        print(f"[DEBUG REAL FACE] REJECTED — likely cartoon, score={cartoon_score}")
+        return False, "cartoon_detected"
+
+    return True, "ok"
+
 
 def detect_and_crop_face(image: np.ndarray):
     h, w = image.shape[:2]
@@ -84,46 +255,89 @@ def detect_and_crop_face(image: np.ndarray):
         work_img = image.copy()
 
     wh, ww = work_img.shape[:2]
+    
     results = face_detector.process(work_img)
 
+    print(f"[DEBUG] Detections found: {len(results.detections) if results.detections else 0}")
+
     if not results.detections:
+        print("[DEBUG] REJECTED — no detections at all")
         return None, "no_face"
-
-    valid = []
-    for det in results.detections:
-        bbox = det.location_data.relative_bounding_box
-        x = int(bbox.xmin * ww)
-        y = int(bbox.ymin * wh)
-        bw = int(bbox.width * ww)
-        bh = int(bbox.height * wh)
-
-        if bw < 60 or bh < 60:
-            continue
-
-        x = max(0, x)
-        y = max(0, y)
-        bw = min(bw, ww - x)
-        bh = min(bh, wh - y)
-
-        if bw > 0 and bh > 0:
-            valid.append((bw * bh, x, y, bw, bh, det))
-
-    if not valid:
-        return None, "no_face"
-
-    valid.sort(reverse=True)
-
-    if len(valid) > 1 and valid[1][0] > 0.6 * valid[0][0]:
+    
+    if len(results.detections) > 1:
+        print(f"[DEBUG] REJECTED — multiple faces detected: {len(results.detections)}")
         return None, "multiple_faces"
+    
+    det = results.detections[0]
 
-    _, x, y, bw, bh, best_det = valid[0]
+    confidence = det.score[0]
+    print(f"[DEBUG] Confidence score: {confidence:.4f}")
+    if confidence < 0.65:
+        print(f"[DEBUG] REJECTED — confidence too low: {confidence:.4f}")
+        return None, "low_confidence"
 
-    # Align face so eyes are level using FaceDetection eye keypoints
-    kps = best_det.location_data.relative_keypoints
+    bbox = det.location_data.relative_bounding_box
+    x = int(bbox.xmin * ww)
+    y = int(bbox.ymin * wh)
+    bw = int(bbox.width * ww)
+    bh = int(bbox.height * wh)
+
+    # Reject if face is too small
+    if bw < 80 or bh < 80:
+        return None, "no_face"
+
+    # Reject if face area is less than 3% of total image — too far away
+    face_area_ratio = (bw * bh) / (ww * wh)
+    if face_area_ratio < 0.03:
+        return None, "too_far"
+
+    # Reject cartoon / illustrated / drawn faces
+    real_ok, real_status = validate_real_face(work_img, x, y, bw, bh)
+    print(f"[DEBUG] Real face check — ok={real_ok}, status={real_status}")
+    if not real_ok:
+        return None, real_status
+
+    x1 = x
+    y1 = y
+    x2 = x + bw
+    y2 = y + bh
+
+    print(f"[DEBUG] Bbox coords — x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+    print(f"[DEBUG] Image bounds — ww={ww}, wh={wh}")
+    print(f"[DEBUG] Overflow — left={x1<0}, top={y1<0}, right={x2>ww}, bottom={y2>wh}")
+
+    # Allow up to 5px overflow on any edge — catches rounding errors from MediaPipe
+    # Only reject if a significant portion of the face is genuinely outside the frame
+    overflow_left = max(0, -x1)
+    overflow_top = max(0, -y1)
+    overflow_right = max(0, x2 - ww)
+    overflow_bottom = max(0, y2 - wh)
+
+    print(f"[DEBUG] Overflow pixels — left={overflow_left}, top={overflow_top}, right={overflow_right}, bottom={overflow_bottom}")
+
+    if overflow_left > 5 or overflow_top > 5 or overflow_right > 5 or overflow_bottom > 5:
+        print(f"[DEBUG] REJECTED — face genuinely cut off at edges")
+        return None, "face_cut_off"
+
+    # Clamp coordinates to image boundaries
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(ww, x2)
+    y2 = min(wh, y2)
+    print(f"[DEBUG] Clamped coords — x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+
+    # Check head rotation angle using eye keypoints
+    kps = det.location_data.relative_keypoints
     rx, ry = kps[0].x * ww, kps[0].y * wh  # right eye
     lx, ly = kps[1].x * ww, kps[1].y * wh  # left eye
     angle = np.degrees(np.arctan2(ly - ry, lx - rx))
+    print(f"[DEBUG] Head rotation angle: {angle:.2f}°")
 
+    if abs(angle) > 45:
+        print(f"[DEBUG] REJECTED — head rotated too much: {angle:.2f}°")
+        return None, "face_rotated"
+
+    # Correct small tilt BEFORE cropping
     if abs(angle) > 2.0:
         eye_cx, eye_cy = (rx + lx) / 2, (ry + ly) / 2
         M = cv2.getRotationMatrix2D((eye_cx, eye_cy), angle, 1.0)
@@ -133,15 +347,10 @@ def detect_and_crop_face(image: np.ndarray):
             borderMode=cv2.BORDER_REFLECT_101
         )
 
-    margin = 0.18
-    x1 = max(0, int(x - bw * margin))
-    y1 = max(0, int(y - bh * margin))
-    x2 = min(ww, int(x + bw * (1 + margin)))
-    y2 = min(wh, int(y + bh * (1 + margin)))
-
+    # Crop AFTER rotation is applied
     crop = work_img[y1:y2, x1:x2]
 
-    # Pad to square before resize to avoid aspect-ratio distortion
+    # Pad to square
     ch, cw = crop.shape[:2]
     if ch != cw:
         side = max(ch, cw)
@@ -154,35 +363,140 @@ def detect_and_crop_face(image: np.ndarray):
             cv2.BORDER_REFLECT_101
         )
 
+    print(f"[DEBUG] Crop size: {crop.shape[1]}x{crop.shape[0]}")
+    return crop, "ok"
+
+
+def detect_and_crop_face_retina(image: np.ndarray):
+    h, w = image.shape[:2]
+
+    if max(h, w) > 800:
+        scale = 800 / max(h, w)
+        work_img = cv2.resize(image, (int(w * scale), int(h * scale)))
+    else:
+        work_img = image.copy()
+
+    wh, ww = work_img.shape[:2]
+
+    # RetinaFace usually works better with BGR input
+    bgr_img = cv2.cvtColor(work_img, cv2.COLOR_RGB2BGR)
+
+    try:
+        detections = RetinaFace.detect_faces(bgr_img)
+    except Exception as e:
+        print("[RETINA ERROR]", str(e))
+        return None, "no_face"
+
+    if not isinstance(detections, dict) or len(detections) == 0:
+        return None, "no_face"
+
+    if len(detections) > 1:
+        return None, "multiple_faces"
+
+    det = list(detections.values())[0]
+
+    confidence = det.get("score", 0)
+    print(f"[RETINA] Confidence: {confidence:.4f}")
+
+    if confidence < 0.80:
+        return None, "low_confidence"
+
+    x1, y1, x2, y2 = det["facial_area"]
+
+    bw = x2 - x1
+    bh = y2 - y1
+
+    if bw < 80 or bh < 80:
+        return None, "no_face"
+
+    face_area_ratio = (bw * bh) / (ww * wh)
+    if face_area_ratio < 0.03:
+        return None, "too_far"
+
+    # Check if face is cut off
+    tolerance = max(5, int(0.03 * min(ww, wh)))
+
+    if x1 < -tolerance or y1 < -tolerance or x2 > ww + tolerance or y2 > wh + tolerance:
+        return None, "face_cut_off"
+
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(ww, x2)
+    y2 = min(wh, y2)
+
+    # Cartoon / fake face check
+    real_ok, real_status = validate_real_face(work_img, x1, y1, bw, bh)
+    if not real_ok:
+        return None, real_status
+
+
+    # Head rotation using RetinaFace eye landmarks
+    landmarks = det.get("landmarks", {})
+    if "left_eye" in landmarks and "right_eye" in landmarks:
+        lx, ly = landmarks["left_eye"]
+        rx, ry = landmarks["right_eye"]
+
+        angle = np.degrees(np.arctan2(ly - ry, lx - rx))
+        print(f"[RETINA] Head rotation angle: {angle:.2f}°")
+
+        if abs(angle) > 45:
+            return None, "face_rotated"
+
+        if abs(angle) > 2.0:
+            eye_cx, eye_cy = (rx + lx) / 2, (ry + ly) / 2
+            M = cv2.getRotationMatrix2D((eye_cx, eye_cy), angle, 1.0)
+            work_img = cv2.warpAffine(
+                work_img,
+                M,
+                (ww, wh),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REFLECT_101
+            )
+
+    crop = work_img[y1:y2, x1:x2]
+
+    ch, cw = crop.shape[:2]
+    if ch != cw:
+        side = max(ch, cw)
+        pad_top = (side - ch) // 2
+        pad_bot = side - ch - pad_top
+        pad_left = (side - cw) // 2
+        pad_right = side - cw - pad_left
+
+        crop = cv2.copyMakeBorder(
+            crop,
+            pad_top,
+            pad_bot,
+            pad_left,
+            pad_right,
+            cv2.BORDER_REFLECT_101
+        )
+
+    print(f"[RETINA] Crop size: {crop.shape[1]}x{crop.shape[0]}")
     return crop, "ok"
 
 
 def validate_face_quality(face: np.ndarray) -> dict:
     h, w = face.shape[:2]
 
+    print(f"[DEBUG QUALITY] Crop size: {w}x{h}")
+
+    # 1. Resolution check — must have enough detail for the model
     if h < 80 or w < 80:
+        print(f"[DEBUG QUALITY] REJECTED — resolution too low: {w}x{h}")
         return {
             "ok": False,
-            "message": "Face is too small or low resolution. Please upload a clearer image."
+            "message": "Face resolution is too low. Please use a higher quality image or move closer to the camera."
         }
 
     gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
 
-    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
-    if h < 120 or w < 120:
-        blur_threshold = 40
-    else:
-        blur_threshold = 60
-
-    if blur_score < blur_threshold:
-        return {
-            "ok": False,
-            "message": "Face appears blurry. Please upload a sharper image."
-        }
-
+    # 2. Brightness check
     brightness = gray.mean()
+    print(f"[DEBUG QUALITY] Brightness: {brightness:.2f}")
 
     if brightness < 40:
+        print(f"[DEBUG QUALITY] REJECTED — too dark: {brightness:.2f}")
         return {
             "ok": False,
             "message": "Image is too dark. Please upload an image with better lighting."
@@ -194,6 +508,57 @@ def validate_face_quality(face: np.ndarray) -> dict:
             "message": "Image is too bright. Please upload an image with better lighting."
         }
 
+    # 3. Uneven lighting check
+    mid = gray.shape[1] // 2
+    left_brightness = gray[:, :mid].mean()
+    right_brightness = gray[:, mid:].mean()
+    lighting_diff = abs(float(left_brightness) - float(right_brightness))
+    print(f"[DEBUG QUALITY] Lighting diff: {lighting_diff:.2f}")
+
+    if lighting_diff > 80:
+        print(f"[DEBUG QUALITY] REJECTED — uneven lighting: {lighting_diff:.2f}")
+        return {
+            "ok": False,
+            "message": "Uneven lighting detected. Please ensure your face is evenly lit from the front."
+        }
+
+    # 4. Contrast check
+    contrast = gray.std()
+    print(f"[DEBUG QUALITY] Contrast: {contrast:.2f}")
+
+    if contrast < 20:
+        print(f"[DEBUG QUALITY] REJECTED — low contrast: {contrast:.2f}")
+        return {
+            "ok": False,
+            "message": "Image appears washed out or low contrast. Please upload a clearer photo."
+        }
+
+    # 5. Noise check
+    denoised = cv2.GaussianBlur(gray, (5, 5), 0)
+    noise_level = np.std(gray.astype(float) - denoised.astype(float))
+    print(f"[DEBUG QUALITY] Noise level: {noise_level:.2f}")
+
+    if noise_level > 15:
+        print(f"[DEBUG QUALITY] REJECTED — too noisy: {noise_level:.2f}")
+        return {
+            "ok": False,
+            "message": "Image appears too noisy. Please take the photo in better lighting conditions."
+        }
+
+    # 6. Blur check
+    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+    avg_dim = (h + w) / 2
+    blur_threshold = int(max(40, min(80, avg_dim * 0.4)))
+    print(f"[DEBUG QUALITY] Blur score: {blur_score:.2f}, threshold: {blur_threshold}")
+
+    if blur_score < blur_threshold:
+        print(f"[DEBUG QUALITY] REJECTED — too blurry: {blur_score:.2f}")
+        return {
+            "ok": False,
+            "message": "Face appears blurry. Please upload a sharper image."
+        }
+    
+    print(f"[DEBUG QUALITY] PASSED — all checks passed")
     return {
         "ok": True,
         "message": "Face quality is acceptable."
@@ -222,51 +587,76 @@ def get_stress_suggestion(
     probabilities: dict
 ) -> dict:
     prompt = f"""
-You are a supportive wellbeing assistant.
+You are a clinical wellbeing assistant trained in stress management.
 
-A facial emotion system produced these results:
-- Stress score: {stress_score}
+Results:
+- Stress score: {stress_score}/100
 - Stress level: {stress_level}
-- Predicted emotion: {predicted_emotion}
-- Probabilities: {json.dumps(probabilities)}
+- Primary emotion: {predicted_emotion}
+- Emotion probabilities: {json.dumps(probabilities)}
 
-Give a short, gentle, non-medical suggestion for the user.
-
-Rules:
-- Do not diagnose any mental or physical condition.
-- Do not claim certainty.
-- Use gentle language like "you may be feeling..."
-- Keep it practical and brief.
-- Return valid JSON only in this format:
+Return ONLY valid JSON, no markdown:
 {{
-  "title": "short heading",
-  "advice": ["tip 1", "tip 2", "tip 3"]
+  "summary": "1-2 sentence clinical-tone observation about the patient's state",
+  "urgency_note": "brief note if high stress, else null",
+  "categories": [
+    {{
+      "category": "Breathing & Immediate Relief",
+      "icon": "wind",
+      "tip": "specific actionable advice"
+    }},
+    {{
+      "category": "Physical Wellbeing",
+      "icon": "heart",
+      "tip": "specific actionable advice"
+    }},
+    {{
+      "category": "Mental Reframe",
+      "icon": "brain",
+      "tip": "specific actionable advice"
+    }},
+    {{
+      "category": "Rest & Recovery",
+      "icon": "moon",
+      "tip": "specific actionable advice"
+    }}
+  ],
+  "when_to_seek_help": "brief guidance on when to see a professional"
 }}
 """
 
     try:
-        response = genai.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt
-        )
+        gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+        response = gemini_model.generate_content(prompt)
+
+
+        print("\n===== GEMINI RAW RESPONSE =====")
+        print(response)
+        print("===== END RAW RESPONSE =====\n")
 
         text = response.text.strip()
 
+        print("\n===== GEMINI TEXT =====")
+        print(text)
+        print("===== END TEXT =====\n")
+
         # Handle case where model wraps JSON in markdown code fences
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.startswith("json"):
-                text = text[4:].strip()
+        text = re.sub(r"```(?:json)?", "", text).strip()
 
         data = json.loads(text)
+
+        print("\n===== GEMINI JSON =====")
+        print(data)
+        print("===== END JSON =====\n")
+
         return data
 
     except Exception as e:
+        print("[GEMINI ERROR]", str(e))
         return {
             "title": "Suggestion unavailable",
             "advice": [f"Could not generate suggestion: {str(e)}"]
         }
-    
 
 @app.get("/")
 def home():
@@ -275,44 +665,117 @@ def home():
     
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    total_start = time.perf_counter()
 
+    # 1. Read image
+    t0 = time.perf_counter()
     contents = await file.read()
+    print(f"[TIME] read_file: {time.perf_counter() - t0:.4f}s")
 
+    # 2. Open image
+    t0 = time.perf_counter()
     try:
         img = Image.open(io.BytesIO(contents))
-        img = ImageOps.exif_transpose(img)  # fix phone/camera rotation
+        img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
-
     img = np.array(img)
+    print(f"[TIME] open_image: {time.perf_counter() - t0:.4f}s")
 
+    # 2.5. Full image brightness check — before face detection
+    gray_full = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    full_brightness = gray_full.mean()
+    if full_brightness < 12:
+        raise HTTPException(status_code=400, detail="The image is too dark. Please take the photo in a brighter environment.")
+    if full_brightness > 245:
+        raise HTTPException(status_code=400, detail="The image is too bright or overexposed. Please avoid direct light facing the camera.")
+    
+    
+    # 3. Face detection
+    t0 = time.perf_counter()
     face, face_status = detect_and_crop_face(img)
+    print("[FACE STATUS - MEDIAPIPE]", face_status)
+    print(f"[TIME] mediapipe_detect_face: {time.perf_counter() - t0:.4f}s")
 
-    if face_status == "no_face":
-         raise HTTPException(status_code=400, detail="No face detected. Please upload an image with one clear visible face.")
+    # RetinaFace fallback only when MediaPipe fails to find a reliable face
+    if face_status in ["no_face", "low_confidence", "face_cut_off"]:
+        retina_t0 = time.perf_counter()
+        print("[INFO] MediaPipe failed. Trying RetinaFace fallback...")
+        face, face_status = detect_and_crop_face_retina(img)
+        print("[FACE STATUS - RETINAFACE]", face_status)
+        print(f"[TIME] retinaface_detect_face: {time.perf_counter() - retina_t0:.4f}s")
 
-    if face_status == "multiple_faces":
-        raise HTTPException(status_code=400, detail="Multiple faces detected. Please upload an image with only one face.")
+    print(f"[TIME] total_detect_face: {time.perf_counter() - t0:.4f}s")
 
+
+    # Run facial obstruction validation only once after final detector result
+    if face_status == "ok":
+        obstruction_t0 = time.perf_counter()
+
+        # Resize full image consistently — same logic used inside both detectors
+        h_orig, w_orig = img.shape[:2]
+        if max(h_orig, w_orig) > 800:
+            scale = 800 / max(h_orig, w_orig)
+            check_img = cv2.resize(img, (int(w_orig * scale), int(h_orig * scale)))
+        else:
+            check_img = img.copy()
+
+        # Pass full resized image, NOT the face crop
+        obstruction_ok, obstruction_status = validate_facial_obstruction(check_img)
+
+        print(f"[DEBUG] Final obstruction check — ok={obstruction_ok}, status={obstruction_status}")
+        print(f"[TIME] validate_facial_obstruction: {time.perf_counter() - obstruction_t0:.4f}s")
+
+        if not obstruction_ok:
+            face_status = obstruction_status
+        
+    
+
+    face_error_messages = {
+        "no_face": "No face detected. Please upload a clear photo with your full face visible.",
+        "multiple_faces": "Multiple people detected. Please upload an image with only one person.",
+        "low_confidence": "Face appears partially covered or blocked. Please ensure nothing is covering your face.",
+        "face_obstructed": "Your face is not clearly visible. Please remove masks, sunglasses, hands, or anything blocking your face.",
+        "too_close": "Your face is too close to the camera. Please move back so your full face fits in the frame.",
+        "too_far": "Your face is too far from the camera. Please move closer so your face fills more of the frame.",
+        "face_cut_off": "Part of your face is outside the frame. Please center your face fully in the image.",
+        "face_rotated": "Your head is tilted too much. Please face the camera directly.",
+        "eyes_closed": "Your eyes appear to be closed. Please keep your eyes open and facing the camera.",
+        "face_not_frontal": "Please face the camera directly. Your face appears to be turned to the side.",
+        "cartoon_detected": "This appears to be an illustrated or cartoon image. Please upload a real photo of your face.",
+    }
+
+    if face_status in face_error_messages:
+        raise HTTPException(status_code=400, detail=face_error_messages[face_status])
+
+    # 4. Quality validation
+    t0 = time.perf_counter()
     quality_result = validate_face_quality(face)
+    print(f"[TIME] validate_face_quality: {time.perf_counter() - t0:.4f}s")
+
     if not quality_result["ok"]:
         raise HTTPException(status_code=400, detail=quality_result["message"])
 
+    # 5. Preprocessing
+    t0 = time.perf_counter()
     face = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
-
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     face = clahe.apply(face)
-
     face = Image.fromarray(face)
-
     face_tensor = transform(face)
     x = face_tensor.unsqueeze(0)
+    print(f"[TIME] preprocessing: {time.perf_counter() - t0:.4f}s")
 
+    # 6. Model inference
+    t0 = time.perf_counter()
     with torch.no_grad():
         output = model(x)
         prob = torch.softmax(output, dim=1)
+    print(f"[TIME] model_inference: {time.perf_counter() - t0:.4f}s")
 
+    # 7. Post-processing
+    t0 = time.perf_counter()
     pred = torch.argmax(prob, dim=1).item()
     prob_list = prob[0].tolist()
 
@@ -329,13 +792,19 @@ async def predict(file: UploadFile = File(...)):
         key=lambda item: item[1],
         reverse=True
     )[:2]
+    print(f"[TIME] postprocessing: {time.perf_counter() - t0:.4f}s")
 
+    # 8. Gemini suggestion
+    t0 = time.perf_counter()
     suggestion = get_stress_suggestion(
         stress_score=stress_score,
         stress_level=stress_level,
         predicted_emotion=emotions[pred],
         probabilities=probabilities
     )
+    print(f"[TIME] gemini_suggestion: {time.perf_counter() - t0:.4f}s")
+
+    print(f"[TIME] total_request: {time.perf_counter() - total_start:.4f}s")
 
     return {
         "predicted_emotion": emotions[pred],
