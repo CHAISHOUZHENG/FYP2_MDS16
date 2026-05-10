@@ -82,11 +82,11 @@ face_mesh = mp_face_mesh.FaceMesh(
 )
 
 
-def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
+def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
     results = face_mesh.process(image)
 
     if not results.multi_face_landmarks:
-        return False, "no_face"
+        return False, "no_face", None
 
     landmarks = results.multi_face_landmarks[0].landmark
 
@@ -103,7 +103,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     print(f"[DEBUG OBSTRUCTION] Nose offset from eye center: {nose_offset:.4f}")
     if nose_offset > 0.12:
         print(f"[DEBUG OBSTRUCTION] REJECTED — face not frontal: {nose_offset:.4f}")
-        return False, "face_not_frontal"
+        return False, "face_not_frontal", None
 
     # --- Eye openness check ---
     # Eye aspect ratio: vertical distance / horizontal distance
@@ -125,13 +125,13 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     print(f"[DEBUG OBSTRUCTION] Left EAR: {left_ear:.4f}, Right EAR: {right_ear:.4f}")
     if left_ear < 0.05 and right_ear < 0.05:
         print(f"[DEBUG OBSTRUCTION] REJECTED — both eyes closed")
-        return False, "eyes_closed"
+        return False, "eyes_closed", None
 
     # --- Nose visibility check ---
     nose_tip_lm = landmarks[4]
     if nose_tip_lm.x < 0 or nose_tip_lm.x > 1 or nose_tip_lm.y < 0 or nose_tip_lm.y > 1:
         print(f"[DEBUG OBSTRUCTION] REJECTED — nose not visible")
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
     
 
     # --- Full face exposure check using landmark positions ---
@@ -167,7 +167,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     ]
 
     if len(missing_critical) >= 1:
-        return False, "face_obstructed"
+        return False, "face_obstructed", None 
     
 
     # --- Mouth visibility / mask check ---
@@ -185,7 +185,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     y2 = min(max(ys) + 12, h)
 
     if x2 <= x1 or y2 <= y1:
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
 
     mouth = gray[y1:y2, x1:x2]
 
@@ -197,7 +197,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
 
     if mouth_texture < 8 and (mouth_brightness < 45 or mouth_brightness > 220):
         print("[DEBUG OBSTRUCTION] REJECTED — possible mask or mouth obstruction")
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
 
 
     # --- Extreme sunglasses / eye obstruction check ---
@@ -220,7 +220,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
     right_eye = crop_eye([362, 263, 386, 374])
 
     if left_eye is None or right_eye is None:
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
 
     left_eye_brightness = left_eye.mean()
     right_eye_brightness = right_eye.mean()
@@ -247,7 +247,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
 
     if eye_brightness_diff > 50 or eye_texture_ratio > 4:
         print("[DEBUG OBSTRUCTION] REJECTED — possible hand/object covering one side of face")
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
 
 
     # Case 1 — dark non-reflective lenses: low brightness AND low texture
@@ -258,7 +258,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
         right_eye_texture < 35
     ):
         print("[DEBUG OBSTRUCTION] REJECTED — dark non-reflective sunglasses")
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
 
     # Case 2 — reflective lenses: very low brightness regardless of texture
     if (
@@ -266,9 +266,9 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str]:
         right_eye_brightness < 40
     ):
         print("[DEBUG OBSTRUCTION] REJECTED — very dark or reflective sunglasses")
-        return False, "face_obstructed"
+        return False, "face_obstructed", None
         
-    return True, "ok" 
+    return True, "ok", landmarks
 
 
 def detect_and_crop_face(image: np.ndarray):
@@ -610,20 +610,71 @@ def validate_face_quality(face: np.ndarray) -> dict:
         "message": "Face quality is acceptable."
     }
 
+def compute_landmark_stress_signal(landmarks) -> float:
+    """
+    Geometric stress signal from Face Mesh landmarks.
+    Returns 0.0 (calm) to 1.0 (stressed).
+    Signals: eyebrow furrow (AU4) + lip compression
+    """
 
-def compute_stress_score(probabilities: dict) -> float:
-    score = 0.0
+    # --- Eyebrow furrow (AU4) ---
+    # 105 = left inner brow, 159 = left upper eyelid
+    # 334 = right inner brow, 386 = right upper eyelid
+    # Smaller distance = more furrowed = more stressed
+    left_brow_dist  = landmarks[159].y - landmarks[105].y
+    right_brow_dist = landmarks[386].y - landmarks[334].y
+    avg_brow_dist   = (left_brow_dist + right_brow_dist) / 2
+
+    # Relaxed ~0.06-0.08, furrowed ~0.02-0.04
+    brow_stress = max(0.0, min(1.0, 1.0 - (avg_brow_dist / 0.07)))
+
+    # --- Lip compression ---
+    # 13 = upper lip center, 14 = lower lip center
+    # Smaller gap = more tense/compressed lips
+    lip_dist = abs(landmarks[14].y - landmarks[13].y)
+
+    # Relaxed ~0.02-0.04, compressed ~0.005-0.015
+    mouth_stress = max(0.0, min(1.0, 1.0 - (lip_dist / 0.03)))
+
+    # Eyebrow is stronger stress signal than lips
+    landmark_stress = (brow_stress * 0.70) + (mouth_stress * 0.30)
+
+    print(f"[DEBUG LANDMARK] Avg brow dist: {avg_brow_dist:.4f} → brow stress: {brow_stress:.4f}")
+    print(f"[DEBUG LANDMARK] Lip dist: {lip_dist:.4f} → mouth stress: {mouth_stress:.4f}")
+    print(f"[DEBUG LANDMARK] Combined landmark stress: {landmark_stress:.4f}")
+
+    return round(landmark_stress, 4)
+
+
+def compute_stress_score(probabilities: dict, landmark_signal: float = 0.0) -> float:
+    """
+    Late fusion: 80% SENet18 emotion score + 20% geometric landmark signal.
+    landmark_signal defaults to 0.0 if landmarks unavailable.
+    """
+    emotion_score = 0.0
     for emotion, prob in probabilities.items():
-        score += prob * stress_weights[emotion]
-    return round(score * 100, 2)
+        emotion_score += prob * stress_weights[emotion]
+
+    # Late fusion blend
+    final_score = (emotion_score * 0.80) + (landmark_signal * 0.20)
+
+    print(f"[DEBUG FUSION] Emotion score: {emotion_score:.4f}")
+    print(f"[DEBUG FUSION] Landmark signal: {landmark_signal:.4f}")
+    print(f"[DEBUG FUSION] Final fused score: {final_score:.4f}")
+
+    return round(final_score * 100, 2)
 
 
 def get_stress_level(score: float) -> str:
-    if score < 35:
-        return "Low"
-    elif score < 65:
-        return "Medium"
-    return "High"
+    if score < 20:
+        return "Normal"
+    elif score < 35:
+        return "Mild"
+    elif score < 55:
+        return "Moderate"
+    elif score < 75:
+        return "High"
+    return "Severe"
 
 
 def get_stress_suggestion(
@@ -672,7 +723,7 @@ Return ONLY valid JSON, no markdown:
 """
 
     try:
-        gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+        gemini_model = genai.GenerativeModel("gemini-1.5-flash")
         response = gemini_model.generate_content(prompt)
 
 
@@ -748,17 +799,25 @@ async def predict(file: UploadFile = File(...)):
 
 
     # Run facial obstruction validation only once after final detector result
+    landmark_signal = 0.0
+    face_landmarks = None
+
     if face_status == "ok":
         obstruction_t0 = time.perf_counter()
 
         # Pass full resized image, NOT the face crop
-        obstruction_ok, obstruction_status = validate_facial_obstruction(check_img)
+        obstruction_ok, obstruction_status, face_landmarks = validate_facial_obstruction(check_img)
 
         print(f"[DEBUG] Final obstruction check — ok={obstruction_ok}, status={obstruction_status}")
         print(f"[TIME] validate_facial_obstruction: {time.perf_counter() - obstruction_t0:.4f}s")
 
         if not obstruction_ok:
             face_status = obstruction_status
+
+        # Compute landmark stress signal if face passed obstruction check
+        if obstruction_ok and face_landmarks is not None:
+            landmark_signal = compute_landmark_stress_signal(face_landmarks)
+            print(f"[DEBUG] Landmark stress signal: {landmark_signal:.4f}")
 
         
         # --- Face completeness validation ---
@@ -825,7 +884,7 @@ async def predict(file: UploadFile = File(...)):
         for i in range(len(emotions))
     }
 
-    stress_score = compute_stress_score(probabilities)
+    stress_score = compute_stress_score(probabilities, landmark_signal)
     stress_level = get_stress_level(stress_score)
 
     top_2 = sorted(
@@ -856,5 +915,6 @@ async def predict(file: UploadFile = File(...)):
             {"emotion": top_2[0][0], "probability": top_2[0][1]},
             {"emotion": top_2[1][0], "probability": top_2[1][1]}
         ],
+        "landmark_stress_signal": landmark_signal,
         "suggestion": suggestion
     }
