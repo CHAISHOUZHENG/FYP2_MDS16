@@ -28,6 +28,8 @@ import {
   Clock,
 } from 'lucide-react';
 
+import { getEmotionCueConfig } from '../lib/emotionCueConfig';
+
 interface HistoryViewProps {
   results: StressResult[];
 }
@@ -437,8 +439,10 @@ export function HistoryView({ results }: HistoryViewProps) {
         </StatCard>
 
         <StatCard icon={<Brain className="w-5 h-5 text-sky-500" />} iconBg="bg-sky-50" label="Top Emotion">
-          <p className="text-2xl font-bold text-slate-800 leading-tight capitalize">{mostFrequentEmotion}</p>
-          {totalAnalyses > 0 && (
+          <p className="text-2xl font-bold text-slate-800 leading-tight capitalize">
+            {mostFrequentEmotion !== '—' ? getEmotionCueConfig(mostFrequentEmotion).label : '—'}
+          </p>
+                    {totalAnalyses > 0 && (
             <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium text-slate-400 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">
               {topEmotionCount}/{totalAnalyses} scans
             </span>
@@ -648,7 +652,7 @@ export function HistoryView({ results }: HistoryViewProps) {
                       <td className="py-3.5 px-5">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 capitalize">
                           {emotionIcon(result.predicted_emotion)}
-                          {result.predicted_emotion}
+                          {getEmotionCueConfig(result.predicted_emotion).label}
                         </span>
                       </td>
                     </tr>
