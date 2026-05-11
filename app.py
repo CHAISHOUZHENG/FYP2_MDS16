@@ -67,22 +67,31 @@ transform = transforms.Compose([
 ])
 
 
-mp_face_detection = mp.solutions.face_detection
-face_detector = mp_face_detection.FaceDetection(
-    model_selection=1,
-    min_detection_confidence=0.6
-)
+try:
+    mp_face_detection = mp.solutions.face_detection
+    face_detector = mp_face_detection.FaceDetection(
+        model_selection=1,
+        min_detection_confidence=0.6
+    )
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
-    static_image_mode=True,
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5
-)
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5
+    )
+except RuntimeError as e:
+    print("[MEDIAPIPE INIT ERROR]", str(e))
+    face_detector = None
+    face_mesh = None
 
 
 def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
+    if face_mesh is None:
+        print("[DEBUG OBSTRUCTION] MediaPipe FaceMesh unavailable; skipping landmark obstruction check")
+        return True, "ok", None
+
     results = face_mesh.process(image)
 
     if not results.multi_face_landmarks:
@@ -245,7 +254,7 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
     print(f"[DEBUG OBSTRUCTION] Eye brightness diff: {eye_brightness_diff:.2f}")
     print(f"[DEBUG OBSTRUCTION] Eye texture ratio: {eye_texture_ratio:.2f}")
 
-    if eye_brightness_diff > 50 or eye_texture_ratio > 4:
+    if eye_brightness_diff > 60 and eye_texture_ratio > 5.5:
         print("[DEBUG OBSTRUCTION] REJECTED — possible hand/object covering one side of face")
         return False, "face_obstructed", None
 
@@ -260,9 +269,9 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
         print("[DEBUG OBSTRUCTION] REJECTED — dark non-reflective sunglasses")
         return False, "face_obstructed", None
 
-    # Case 2 — reflective lenses: very low brightness regardless of texture
+    # Case 2 — both eyes are very dark, which is more likely sunglasses than natural shadow
     if (
-        left_eye_brightness < 40 or 
+        left_eye_brightness < 40 and
         right_eye_brightness < 40
     ):
         print("[DEBUG OBSTRUCTION] REJECTED — very dark or reflective sunglasses")
@@ -272,6 +281,10 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
 
 
 def detect_and_crop_face(image: np.ndarray):
+    if face_detector is None:
+        print("[DEBUG] MediaPipe FaceDetection unavailable; using RetinaFace fallback")
+        return detect_and_crop_face_retina(image)
+
     h, w = image.shape[:2]
 
     if max(h, w) > 800:
