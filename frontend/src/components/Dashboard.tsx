@@ -5,7 +5,7 @@ import { Sidebar } from './Sidebar';
 import { DashboardView } from './DashboardView';
 import { HistoryView } from './HistoryView';
 import { ProfileView } from './ProfileView';
-import { StressAnalyzer } from './StressAnalyzer';
+import { StressAnalyzer, type AnalysisResult } from './StressAnalyzer';
 
 interface DashboardProps {
   onAnalyze: () => void;
@@ -17,6 +17,7 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
   const [results, setResults] = useState<StressResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<'dashboard' | 'analyze' | 'history' | 'profile'>('dashboard');
+  const [analyzeKey, setAnalyzeKey] = useState(0);
 
   useEffect(() => {
     fetchResults();
@@ -34,9 +35,19 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
     setLoading(false);
   };
 
-  const handleAnalysisComplete = () => {
-    fetchResults();
+  const handleAnalysisComplete = (latest: AnalysisResult) => {
+    const optimistic: StressResult = {
+      id: `pending-${Date.now()}`,
+      user_id: '',
+      predicted_emotion: latest.predicted_emotion,
+      stress_score: latest.stress_score,
+      stress_level: latest.stress_level,
+      probabilities: latest.probabilities,
+      created_at: new Date().toISOString(),
+    };
+    setResults(prev => [optimistic, ...prev]);
     setCurrentView('dashboard');
+    fetchResults();
   };
 
   const handleProfileUpdate = async () => {
@@ -57,10 +68,20 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
 
     switch (currentView) {
       case 'dashboard':
-        return <DashboardView results={results} profile={profile} onNavigateAnalyze={() => setCurrentView('analyze')} />;
+        return (
+          <DashboardView
+            results={results}
+            profile={profile}
+            onNavigateAnalyze={() => {
+              setAnalyzeKey(k => k + 1);
+              setCurrentView('analyze');
+            }}
+          />
+        );
       case 'analyze':
         return (
           <StressAnalyzer
+            key={analyzeKey}
             onBack={() => setCurrentView('dashboard')}
             onAnalysisComplete={handleAnalysisComplete}
           />
@@ -78,7 +99,11 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
     <div className="flex h-screen bg-gradient-to-br from-cyan-50 via-blue-50 to-teal-50 overflow-hidden">
       <Sidebar
         currentView={currentView}
-        onViewChange={setCurrentView}
+        onViewChange={(view) => {
+          if (view === 'analyze') setAnalyzeKey(k => k + 1);
+          if (view === 'dashboard') fetchResults(); // ← add this
+          setCurrentView(view);
+        }}
         onLogOut={onLogOut}
         userName={profile?.full_name || profile?.email || 'User'}
       />

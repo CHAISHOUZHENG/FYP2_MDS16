@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Activity,
   Camera,
   RefreshCw,
-  Save,
   Wind,
   Droplets,
   Moon,
@@ -17,6 +15,7 @@ import {
   AlertTriangle,
   BookOpen,
   Stethoscope,
+  Activity
 } from 'lucide-react';
 import { getEmotionCueConfig } from '../lib/emotionCueConfig';
 
@@ -44,8 +43,6 @@ interface PredictionResult {
 
 interface StressResultCardProps {
   result: PredictionResult;
-  isSaving: boolean;
-  onSave: () => void;
   onReset: () => void;
   imageUrl?: string | null;
 }
@@ -126,7 +123,6 @@ const getTheme = (level: string): StressTheme => {
       supportMessage: "Small self-care habits go a long way.\nYou're doing a great job keeping things in check.",
     };
   }
-  /* normal */
   return {
     gradient: 'from-green-400 via-teal-400 to-emerald-400',
     cardBg: 'bg-gradient-to-br from-green-50 to-teal-50',
@@ -197,7 +193,6 @@ const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   activity: <Activity className="w-5 h-5" />,
 };
 
-// Soft palette per category position so cards feel distinct without being loud
 const CARD_ACCENTS = [
   { bg: 'bg-sky-50', border: 'border-sky-100', label: 'text-sky-600', dot: 'bg-sky-400' },
   { bg: 'bg-teal-50', border: 'border-teal-100', label: 'text-teal-600', dot: 'bg-teal-400' },
@@ -252,7 +247,7 @@ const ScoreRing = ({ score, theme }: { score: number; theme: StressTheme }) => {
   );
 };
 
-export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }: StressResultCardProps) {
+export function StressResultCard({ result, onReset, imageUrl }: StressResultCardProps) {
   const theme = getTheme(result.stress_level);
   const [visible, setVisible] = useState(false);
 
@@ -280,7 +275,7 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
     theme.label === 'Mild'     ? '🙂' : '😌';
   const cue = getEmotionCueConfig(result.predicted_emotion);
 
-  const fadeClass = (delay: number) =>
+  const fadeClass = (_delay: number) =>
     `transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`;
 
   return (
@@ -304,15 +299,13 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
         </p>
       </div>
 
-      {/* ── Hero: Photo + Score side-by-side (or stacked on mobile) ── */}
+      {/* ── Hero: Photo + Score ── */}
       <div className={`relative rounded-3xl overflow-hidden shadow-2xl mb-5 border ${theme.borderColor} transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '450ms' }}>
         <div className={`absolute inset-0 bg-gradient-to-br ${theme.gradient} opacity-10`} />
         <div className={`absolute -top-28 -right-28 w-80 h-80 rounded-full bg-gradient-to-br ${theme.gradient} opacity-[0.08] blur-3xl`} />
         <div className={`absolute -bottom-28 -left-28 w-80 h-80 rounded-full bg-gradient-to-br ${theme.gradient} opacity-[0.08] blur-3xl`} />
 
         <div className={`relative ${theme.cardBg} flex flex-col sm:flex-row`}>
-
-          {/* Photo panel */}
           {imageUrl && (
             <div className="sm:w-2/5 flex-shrink-0 relative">
               <img
@@ -321,7 +314,6 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
                 className="w-full h-full object-cover"
                 style={{ minHeight: '260px', maxHeight: '360px' }}
               />
-              {/* overlay label */}
               <div className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm rounded-full px-3 py-1">
                 <Camera className="w-3 h-3 text-white/80" />
                 <span className="text-[11px] font-medium text-white/90">Photo analyzed</span>
@@ -329,7 +321,6 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
             </div>
           )}
 
-          {/* Score panel */}
           <div className={`flex-1 flex flex-col items-center justify-center p-8 sm:p-10 ${imageUrl ? '' : 'w-full'}`}>
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-6">Your Stress Score</p>
             <ScoreRing score={result.stress_score} theme={theme} />
@@ -375,12 +366,9 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════
-          CLINICAL WELLBEING REPORT
-      ══════════════════════════════════════════ */}
+      {/* ── Clinical Wellbeing Report ── */}
       <div className={`mb-6 ${fadeClass(740)}`} style={{ transitionDelay: '740ms' }}>
 
-        {/* Section header */}
         <div className="flex items-center gap-3 mb-5">
           <div className={`w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br ${theme.gradient} text-white shadow-sm flex-shrink-0`}>
             <Stethoscope className="w-4 h-4" />
@@ -391,7 +379,6 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
           </div>
         </div>
 
-        {/* Clinical Summary */}
         {summary && (
           <div className="relative bg-white border border-slate-200 rounded-2xl px-6 py-5 mb-4 overflow-hidden">
             <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-sky-400 to-cyan-400 rounded-l-2xl" />
@@ -407,7 +394,6 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
           </div>
         )}
 
-        {/* Urgency Note */}
         {urgencyNote && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 mb-4 flex items-start gap-3">
             <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -420,7 +406,6 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
           </div>
         )}
 
-        {/* Category Cards */}
         {hasCategories ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             {categories.map((cat, i) => {
@@ -446,7 +431,6 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
             })}
           </div>
         ) : (
-          /* Fallback step cards */
           <div className="space-y-3 mb-4">
             {adviceItems.map((advice, i) => (
               <div
@@ -468,11 +452,10 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
           </div>
         )}
 
-        {/* When to Seek Help */}
         {whenToSeekHelp && (
           <div className="bg-slate-800 rounded-2xl px-6 py-5 flex items-start gap-4">
             <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <ShieldCheck className="w-4.5 h-4.5 text-slate-300" />
+              <ShieldCheck className="w-4 h-4 text-slate-300" />
             </div>
             <div>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Professional Support</p>
@@ -494,34 +477,17 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
         </p>
       </div>
 
-      {/* ── Action Buttons ── */}
+      {/* ── Action Button ── */}
       <div
         className={`flex gap-3 ${fadeClass(900)}`}
         style={{ transitionDelay: `${900 + adviceItems.length * 70}ms` }}
       >
         <button
           onClick={onReset}
-          className="flex items-center gap-2.5 px-6 py-4 border-2 border-slate-200 text-slate-600 rounded-2xl font-semibold hover:bg-slate-50 hover:border-slate-300 transition-all duration-200 whitespace-nowrap"
+          className={`flex-1 flex items-center justify-center gap-2.5 py-4 rounded-2xl font-semibold text-base bg-gradient-to-r ${theme.gradient} text-white hover:shadow-xl hover:scale-[1.02] active:scale-[0.99] transition-all duration-300 shadow-lg`}
         >
-          <RefreshCw className="w-4 h-4" />
-          Try Again
-        </button>
-        <button
-          onClick={onSave}
-          disabled={isSaving}
-          className={`flex-1 flex items-center justify-center gap-2.5 py-4 rounded-2xl font-semibold text-base bg-gradient-to-r ${theme.gradient} text-white hover:shadow-xl hover:scale-[1.02] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-300 shadow-lg`}
-        >
-          {isSaving ? (
-            <>
-              <Activity className="w-5 h-5 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className="w-5 h-5" />
-              Save Result
-            </>
-          )}
+          <RefreshCw className="w-5 h-5" />
+          Analyze Again
         </button>
       </div>
 
@@ -530,7 +496,7 @@ export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }
           <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
-          Saved privately & securely
+          Result saved automatically
         </span>
       </div>
     </div>

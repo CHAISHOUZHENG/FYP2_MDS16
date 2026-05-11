@@ -362,15 +362,11 @@ export function HistoryView({ results }: HistoryViewProps) {
   if (results.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-cyan-50 flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-cyan-600" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold leading-tight bg-gradient-to-r from-cyan-500 to-teal-500 bg-clip-text text-transparent">
-            Analysis History
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest text-cyan-500 mb-1.5">Reports</p>
+          <h2 className="text-2xl font-bold leading-tight">
+            <span className="bg-gradient-to-r from-cyan-500 to-teal-500 bg-clip-text text-transparent">Analysis History</span>
           </h2>
-          </div>
         </div>
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-16 text-center">
           <div className="w-16 h-16 rounded-2xl bg-cyan-50 flex items-center justify-center mx-auto mb-5">
@@ -388,27 +384,20 @@ export function HistoryView({ results }: HistoryViewProps) {
 
       {/* ── Page header ── */}
       <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-cyan-50 flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-cyan-600" />
-          </div>
+        <div className="flex items-end justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-bold leading-tight bg-gradient-to-r from-cyan-500 to-teal-500 bg-clip-text text-transparent">
-  Analysis History
-</h2>
-          </div>
-          <div className="ml-auto flex items-center gap-2 bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-semibold text-slate-600">{totalAnalyses} record{totalAnalyses !== 1 ? 's' : ''}</span>
+            <h1 className="text-3xl font-bold leading-tight mb-1">
+              <span className="bg-gradient-to-r from-cyan-500 to-teal-500 bg-clip-text text-transparent">Analysis History</span>
+            </h1>
           </div>
         </div>
 
         {/* ── Date range selector ── */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 mr-1">
+          <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-2">
             <Calendar className="w-3 h-3" />
             Period
-          </div>
+          </span>
           {DATE_RANGE_PRESETS.map(({ key, label }) => (
             <button
               key={key}
@@ -429,9 +418,6 @@ export function HistoryView({ results }: HistoryViewProps) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={<Activity className="w-5 h-5 text-cyan-600" />} iconBg="bg-cyan-50" label="Total Analyses">
           <p className="text-2xl font-bold text-slate-800 leading-tight">{totalAnalyses}</p>
-          <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium text-slate-400 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">
-            {DATE_RANGE_PRESETS.find(p => p.key === dateRange)?.label.toLowerCase()}
-          </span>
         </StatCard>
 
         <StatCard icon={<TrendingUp className="w-5 h-5 text-teal-600" />} iconBg="bg-teal-50" label="Avg Stress Score">
@@ -448,9 +434,6 @@ export function HistoryView({ results }: HistoryViewProps) {
 
         <StatCard icon={<AlertTriangle className="w-5 h-5 text-rose-500" />} iconBg="bg-rose-50" label="Highest Score">
           <p className="text-2xl font-bold text-slate-800 leading-tight">{totalAnalyses > 0 ? highestScore.toFixed(1) : '—'}</p>
-          <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium text-slate-400 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">
-            peak level
-          </span>
         </StatCard>
 
         <StatCard icon={<Brain className="w-5 h-5 text-sky-500" />} iconBg="bg-sky-50" label="Top Emotion">
@@ -554,10 +537,10 @@ export function HistoryView({ results }: HistoryViewProps) {
             </div>
 
             <div className="sm:ml-auto flex items-center gap-2 flex-wrap">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 mr-1">
+              <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-2">
                 <SlidersHorizontal className="w-3 h-3" />
                 Filter
-              </div>
+              </span>
               {FILTERS.map(({ key, label, activeStyle, dot }) => (
                 <button
                   key={key}
@@ -601,9 +584,9 @@ export function HistoryView({ results }: HistoryViewProps) {
                     </span>
                   </button>
                 </th>
-                <th className="text-left py-3 px-5 text-[11px] font-bold uppercase tracking-wider text-slate-400">Emotion</th>
                 <th className="text-left py-3 px-5 text-[11px] font-bold uppercase tracking-wider text-slate-400">Stress Score</th>
                 <th className="text-left py-3 px-5 text-[11px] font-bold uppercase tracking-wider text-slate-400">Level</th>
+                <th className="text-left py-3 px-5 text-[11px] font-bold uppercase tracking-wider text-slate-400">Emotion</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -640,12 +623,6 @@ export function HistoryView({ results }: HistoryViewProps) {
                         </div>
                       </td>
                       <td className="py-3.5 px-5">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 capitalize">
-                          {emotionIcon(result.predicted_emotion)}
-                          {result.predicted_emotion}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-5">
                         <div className="flex items-center gap-2.5">
                           <span
                             className="text-sm font-bold w-8 shrink-0 tabular-nums"
@@ -666,6 +643,12 @@ export function HistoryView({ results }: HistoryViewProps) {
                         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border ${LEVEL_STYLES[levelKey]}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${LEVEL_DOT[levelKey]}`} />
                           {result.stress_level}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-5">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 capitalize">
+                          {emotionIcon(result.predicted_emotion)}
+                          {result.predicted_emotion}
                         </span>
                       </td>
                     </tr>

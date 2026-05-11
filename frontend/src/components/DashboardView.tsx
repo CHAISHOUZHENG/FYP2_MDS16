@@ -29,11 +29,11 @@ interface DashboardViewProps {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const scoreColor = (score: number): string => {
-  if (score < 20) return '#4ade80'; // green-400
-  if (score < 35) return '#2dd4bf'; // teal-400
-  if (score < 55) return '#fbbf24'; // amber-400
-  if (score < 75) return '#fb923c'; // orange-400
-  return '#f87171';                 // red-400
+  if (score < 20) return '#4ade80';
+  if (score < 35) return '#2dd4bf';
+  if (score < 55) return '#fbbf24';
+  if (score < 75) return '#fb923c';
+  return '#f87171';
 };
 
 const getStressInfo = (level: string) => {
@@ -42,7 +42,7 @@ const getStressInfo = (level: string) => {
   if (l === 'mild')     return { colorCls: 'teal',   badge: 'bg-teal-100 text-teal-700 border-teal-200',     message: 'Staying balanced' };
   if (l === 'moderate') return { colorCls: 'amber',  badge: 'bg-amber-100 text-amber-700 border-amber-200',  message: 'Stay mindful' };
   if (l === 'high')     return { colorCls: 'orange', badge: 'bg-orange-100 text-orange-700 border-orange-200', message: 'Take a breather' };
-  /* severe */          return { colorCls: 'red',    badge: 'bg-red-100 text-red-700 border-red-200',         message: 'Take care of yourself' };
+  return                       { colorCls: 'red',    badge: 'bg-red-100 text-red-700 border-red-200',         message: 'Take care of yourself' };
 };
 
 const EMOTION_META: Record<string, { icon: string; color: string; bg: string }> = {
@@ -72,7 +72,7 @@ const avgStressLabel = (score: number) => {
   if (score < 35) return { text: 'Mild Average',     cls: 'bg-teal-50 text-teal-700 border-teal-200' };
   if (score < 55) return { text: 'Moderate Average', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (score < 75) return { text: 'High Average',     cls: 'bg-orange-50 text-orange-700 border-orange-200' };
-  return             { text: 'Severe Average',       cls: 'bg-red-50 text-red-700 border-red-200' };
+  return                 { text: 'Severe Average',   cls: 'bg-red-50 text-red-700 border-red-200' };
 };
 
 const formatAbsDate = (d: string) => {
@@ -300,27 +300,26 @@ function CardLabel({ children }: { children: React.ReactNode }) {
 // ── main component ────────────────────────────────────────────────────────────
 
 export function DashboardView({ results, profile, onNavigateAnalyze }: DashboardViewProps) {
-  const latestResult   = results[0] ?? null;
-  const averageStress  = results.length ? results.reduce((s, r) => s + r.stress_score, 0) / results.length : 0;
-  const stressInfo     = latestResult ? getStressInfo(latestResult.stress_level) : null;
-  const avgLabel       = avgStressLabel(averageStress);
+  const latestResult    = results[0] ?? null;
+  const averageStress   = results.length ? results.reduce((s, r) => s + r.stress_score, 0) / results.length : 0;
+  const stressInfo      = latestResult ? getStressInfo(latestResult.stress_level) : null;
+  const avgLabel        = avgStressLabel(averageStress);
   const dominantEmotion = topEmotion(results);
-  const eMeta          = emotionMeta(dominantEmotion);
-  const aiInsight      = getAIInsight(results);
-  const trendInsight   = getTrendInsight(results);
+  const eMeta           = emotionMeta(dominantEmotion);
+  const aiInsight       = getAIInsight(results);
+  const trendInsight    = getTrendInsight(results);
 
   const displayName = profile?.full_name
-  ? profile.full_name
-  : profile?.email
-  ? profile.email.split('@')[0]
-  : 'there';
+    ? profile.full_name
+    : profile?.email
+    ? profile.email.split('@')[0]
+    : 'there';
+
   const recentTrendDir = results.length >= 2
     ? results[0].stress_score - results[1].stress_score
     : 0;
 
-  const chartData = buildChartData(
-    [...results].slice(0, 10).reverse()
-  );
+  const chartData = buildChartData([...results].slice(0, 10).reverse());
 
   if (!latestResult) {
     return (
@@ -372,7 +371,6 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
                         : <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">Due today</span>;
                     })()}
                   </div>
-                  <p className="text-xs text-slate-500 leading-snug mb-1">Regular scans help you understand your stress patterns and catch changes early</p>
                   <p className="text-sm text-slate-700"><span className="font-semibold">Last scan:</span> {formatAbsDate(latestResult.created_at)}</p>
                 </div>
               </div>
@@ -398,22 +396,9 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
                   : 'text-red-600'
                 }`}>{stressInfo?.message}</p>
               </div>
-              {recentTrendDir !== 0 && (
-                <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                  recentTrendDir < 0
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-rose-50 text-rose-700 border-rose-200'
-                }`}>
-                  {recentTrendDir < 0
-                    ? <TrendingDown className="w-3 h-3" />
-                    : <TrendingUp className="w-3 h-3" />}
-                  {Math.abs(recentTrendDir).toFixed(1)} pts
-                </div>
-              )}
             </div>
 
             <div className="flex items-center gap-8 mb-7">
-              {/* Score block */}
               <div className="flex-shrink-0">
                 <div className="flex items-baseline gap-1.5 mb-3">
                   <span className="text-[72px] font-extrabold leading-none bg-gradient-to-br from-teal-500 to-cyan-600 bg-clip-text text-transparent">
@@ -425,14 +410,8 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
                   <span className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-bold border ${stressInfo?.badge}`}>
                     {latestResult.stress_level} Stress
                   </span>
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border ${eMeta.bg} ${eMeta.color}`}>
-                    <span className="text-sm">{eMeta.icon}</span>
-                    <span className="capitalize">{latestResult.predicted_emotion}</span>
-                  </span>
                 </div>
               </div>
-
-              {/* Stress meter */}
               <div className="flex-1">
                 <StressMeter score={latestResult.stress_score} />
               </div>
@@ -448,10 +427,6 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
                   <h3 className="text-base font-bold text-slate-700">
                     Last {chartData.length} Readings
                   </h3>
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-400 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 font-medium">
-                  <Activity className="w-3.5 h-3.5" />
-                  {results.length} total
                 </div>
               </div>
 

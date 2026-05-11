@@ -27,7 +27,6 @@ export function Sidebar({ currentView, onViewChange, onLogOut, userName }: Sideb
             <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-600 to-teal-600 bg-clip-text text-transparent">
               StressKE
             </h1>
-            <p className="text-xs text-slate-500">AI Wellness Companion</p>
           </div>
         </div>
       </div>
