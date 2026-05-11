@@ -300,7 +300,7 @@ def frontal_face_candidates(image: np.ndarray) -> list[dict]:
 
 
 def is_front_facing(candidate: dict) -> bool:
-    x, _, bw, _ = candidate["box"]
+    x, y, bw, bh = candidate["box"]
     landmarks = candidate.get("landmarks", {})
     if bw <= 0 or not all(name in landmarks for name in ("right_eye", "left_eye", "nose")):
         return False
@@ -309,6 +309,8 @@ def is_front_facing(candidate: dict) -> bool:
     left_eye = landmarks["left_eye"]
     nose = landmarks["nose"]
     mouth = landmarks.get("mouth")
+    if bh <= 0:
+        return False
 
     eye_dx = left_eye[0] - right_eye[0]
     eye_dy = left_eye[1] - right_eye[1]
@@ -322,12 +324,22 @@ def is_front_facing(candidate: dict) -> bool:
         return False
 
     nose_in_box = (nose[0] - x) / bw
+    nose_y_in_box = (nose[1] - y) / bh
+    eye_center_y = (left_eye[1] + right_eye[1]) / 2
+    nose_below_eye_line = (nose[1] - eye_center_y) / bh
+    if nose_y_in_box < 0.30 or nose_below_eye_line < 0.05:
+        return False
+
     eye_center_x = (left_eye[0] + right_eye[0]) / 2
     nose_offset = abs(nose[0] - eye_center_x) / max(eye_distance, 1e-6)
     if nose_offset > 0.35:
         return False
 
     if mouth is not None:
+        mouth_below_nose = (mouth[1] - nose[1]) / bh
+        if mouth_below_nose < 0.08:
+            return False
+
         mouth_offset = abs(mouth[0] - nose[0]) / max(eye_distance, 1e-6)
         if mouth_offset > 0.45:
             return False
