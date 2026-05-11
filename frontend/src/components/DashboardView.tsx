@@ -20,6 +20,8 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
+import { getEmotionCueConfig } from '../lib/emotionCueConfig';
+
 interface DashboardViewProps {
   results: StressResult[];
   profile: any;
@@ -120,14 +122,23 @@ const getAIInsight = (results: StressResult[]) => {
   const avg = recent.reduce((s, r) => s + r.stress_score, 0) / recent.length;
   const variance = recent.reduce((s, r) => s + Math.pow(r.stress_score - avg, 2), 0) / recent.length;
   const top = topEmotion(results);
+
   if (avg >= 65) return 'Frequent high stress patterns detected across recent sessions. Consider prioritising rest and recovery.';
   if (avg < 35) return 'Your stress levels have been consistently low recently — keep up your healthy routines.';
-  if (variance < 50) return 'Stress appears stable over recent analyses with low variability — a positive sign.';
-  if (top === 'sad' || top === 'fear') return `${top.charAt(0).toUpperCase() + top.slice(1)} emotion has appeared most frequently. Reaching out or journalling may help.`;
   if (results.length >= 2 && results[0].stress_score < results[1].stress_score)
     return 'Stress levels have improved compared to your previous reading. Great progress!';
   if (results.length >= 2 && results[0].stress_score > results[1].stress_score)
     return 'Recent readings show elevated stress relative to your previous session — take it easy.';
+  if (variance < 50) return 'Stress appears stable over recent analyses with low variability — a positive sign.';
+
+  if (top === 'fear')     return `${getEmotionCueConfig(top).label} emotion has appeared most frequently. Try some breathing exercises to ease the tension.`;
+  if (top === 'angry')    return `${getEmotionCueConfig(top).label} emotion has appeared most frequently. Taking short breaks may help you reset.`;
+  if (top === 'disgust')  return `${getEmotionCueConfig(top).label} emotion has appeared most frequently. Consider what situations are triggering this feeling.`;
+  if (top === 'sad')      return `${getEmotionCueConfig(top).label} emotion has appeared most frequently. Reaching out or journalling may help.`;
+  if (top === 'surprise') return `${getEmotionCueConfig(top).label} emotion has appeared most frequently. Try to identify what is causing unexpected reactions.`;
+  if (top === 'happy')    return `${getEmotionCueConfig(top).label} emotion has been your most frequent state — keep nurturing what is working well for you.`;
+  if (top === 'neutral')  return 'Your emotional state has been largely neutral — a sign of stability, though regular check-ins are still worthwhile.';
+
   return 'Your emotional state appears relatively stable across recent analyses.';
 };
 
@@ -485,8 +496,7 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
                 <Lightbulb className="w-4 h-4 text-white" />
               </div>
               <div>
-                <CardLabel>Personalised</CardLabel>
-                <h3 className="text-sm font-bold text-slate-800 leading-tight">AI Recommendations</h3>
+                <CardLabel>Wellness Tips</CardLabel>
               </div>
             </div>
             <div className="space-y-2">
@@ -535,7 +545,9 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
               <div className="flex items-center gap-3 mt-2">
                 <span className="text-3xl leading-none">{eMeta.icon}</span>
                 <div>
-                  <p className={`text-base font-bold capitalize leading-tight ${eMeta.color}`}>{dominantEmotion}</p>
+                  <p className={`text-base font-bold capitalize leading-tight ${eMeta.color}`}>
+                    {getEmotionCueConfig(dominantEmotion).label}
+                  </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">most frequent</p>
                 </div>
               </div>
@@ -543,7 +555,7 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
 
             {/* Average Stress */}
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow duration-300 p-4">
-              <CardLabel>Average Stress</CardLabel>
+              <CardLabel>Stress Average</CardLabel>
               <div className="flex items-end gap-1.5 mt-2 mb-2">
                 <span className="text-3xl font-extrabold text-slate-800 leading-none">{averageStress.toFixed(0)}</span>
                 <span className="text-sm text-slate-400 mb-0.5">/ 100</span>
@@ -552,27 +564,9 @@ export function DashboardView({ results, profile, onNavigateAnalyze }: Dashboard
                 {avgLabel.text}
               </span>
             </div>
-
-            {/* Total Analyses */}
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow duration-300 p-4">
-              <CardLabel>Total Analyses</CardLabel>
-              <div className="flex items-end gap-1.5 mt-2 mb-1">
-                <span className="text-3xl font-extrabold text-slate-800 leading-none">{results.length}</span>
-                <span className="text-sm text-slate-400 mb-0.5">session{results.length !== 1 ? 's' : ''}</span>
-              </div>
-              <div className={`flex items-center gap-1 text-[11px] font-semibold ${
-                recentTrendDir < 0 ? 'text-emerald-600' : recentTrendDir > 0 ? 'text-rose-500' : 'text-slate-400'
-              }`}>
-                {recentTrendDir < 0
-                  ? <><TrendingDown className="w-3 h-3" /> Improving</>
-                  : recentTrendDir > 0
-                  ? <><TrendingUp className="w-3 h-3" /> Elevated</>
-                  : <><Minus className="w-3 h-3" /> Stable</>}
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
   );
 }
