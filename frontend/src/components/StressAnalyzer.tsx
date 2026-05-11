@@ -12,6 +12,7 @@ import {
   Trash2,
   Sparkles,
   Heart,
+  EyeOff,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -204,8 +205,9 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
         <div className="max-w-6xl mx-auto px-8 py-8">
           <div className="mb-8 animate-fadeIn">
             <div className="mb-4">
-              <h1 className="text-3xl font-bold text-slate-800 mb-1">Stress Analysis</h1>
-              <p className="text-slate-500 text-sm font-normal">AI-powered emotional wellness assessment</p>
+              <h1 className="text-3xl font-bold leading-tight mb-1">
+                <span className="bg-gradient-to-r from-cyan-500 to-teal-500 bg-clip-text text-transparent">Stress  Analysis</span>
+              </h1>
             </div>
 
             <div className="flex items-center gap-2">
@@ -297,7 +299,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                           {imageQuality === 'good' && (
                             <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-slideDown">
                               <CheckCircle className="w-4 h-4" />
-                              <span className="text-sm font-semibold">Upload Completed</span>
+                              <span className="text-sm font-semibold">Face detected</span>
                             </div>
                           )}
                         </div>
@@ -384,6 +386,10 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                       <Camera className="w-4 h-4 flex-shrink-0 mt-0.5" />
                       <span>Avoid blurry or low-quality images</span>
                     </li>
+                    <li className="flex items-start gap-2">
+                      <EyeOff className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>Remove masks, sunglasses, or anything covering your face</span>
+                    </li>
                   </ul>
                 </div>
 
@@ -421,6 +427,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
                   setResult(null);
                   handleRemoveImage();
                 }}
+                imageUrl={previewUrl}
               />
             </div>
           )}
@@ -429,4 +436,3 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
     </>
   );
 }
-

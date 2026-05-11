@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { StressResult } from '../lib/supabase';
 import {
   LineChart,
   Line,
@@ -6,15 +7,12 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ReferenceLine,
   ResponsiveContainer,
-  Dot,
 } from 'recharts';
-import { StressResult } from '../lib/supabase';
 import {
   Activity,
+  Bell,
   Brain,
-  Calendar,
   Lightbulb,
   Minus,
   Sparkles,
@@ -25,14 +23,26 @@ import {
 interface DashboardViewProps {
   results: StressResult[];
   profile: any;
+  onNavigateAnalyze: () => void;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const getStressInfo = (score: number) => {
-  if (score < 35) return { level: 'Low', colorCls: 'emerald', dot: '#10b981', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200', message: "You're doing great!" };
-  if (score < 65) return { level: 'Medium', colorCls: 'amber', dot: '#f59e0b', badge: 'bg-amber-50 text-amber-700 border-amber-200', message: 'Stay mindful' };
-  return { level: 'High', colorCls: 'rose', dot: '#f43f5e', badge: 'bg-rose-50 text-rose-700 border-rose-200', message: 'Take care of yourself' };
+const scoreColor = (score: number): string => {
+  if (score < 20) return '#4ade80'; // green-400
+  if (score < 35) return '#2dd4bf'; // teal-400
+  if (score < 55) return '#fbbf24'; // amber-400
+  if (score < 75) return '#fb923c'; // orange-400
+  return '#f87171';                 // red-400
+};
+
+const getStressInfo = (level: string) => {
+  const l = level.toLowerCase();
+  if (l === 'normal')   return { colorCls: 'green',  badge: 'bg-green-100 text-green-700 border-green-200',   message: "You're doing great!" };
+  if (l === 'mild')     return { colorCls: 'teal',   badge: 'bg-teal-100 text-teal-700 border-teal-200',     message: 'Staying balanced' };
+  if (l === 'moderate') return { colorCls: 'amber',  badge: 'bg-amber-100 text-amber-700 border-amber-200',  message: 'Stay mindful' };
+  if (l === 'high')     return { colorCls: 'orange', badge: 'bg-orange-100 text-orange-700 border-orange-200', message: 'Take a breather' };
+  /* severe */          return { colorCls: 'red',    badge: 'bg-red-100 text-red-700 border-red-200',         message: 'Take care of yourself' };
 };
 
 const EMOTION_META: Record<string, { icon: string; color: string; bg: string }> = {
@@ -58,9 +68,11 @@ const topEmotion = (results: StressResult[]) => {
 };
 
 const avgStressLabel = (score: number) => {
-  if (score < 35) return { text: 'Low Average',      cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-  if (score < 65) return { text: 'Moderate Average', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
-  return             { text: 'High Average',         cls: 'bg-rose-50 text-rose-700 border-rose-200' };
+  if (score < 20) return { text: 'Normal Average',   cls: 'bg-green-50 text-green-700 border-green-200' };
+  if (score < 35) return { text: 'Mild Average',     cls: 'bg-teal-50 text-teal-700 border-teal-200' };
+  if (score < 55) return { text: 'Moderate Average', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (score < 75) return { text: 'High Average',     cls: 'bg-orange-50 text-orange-700 border-orange-200' };
+  return             { text: 'Severe Average',       cls: 'bg-red-50 text-red-700 border-red-200' };
 };
 
 const formatAbsDate = (d: string) => {
@@ -68,24 +80,31 @@ const formatAbsDate = (d: string) => {
   return `${dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
 };
 
-const formatChartDate = (d: string) => {
-  const dt = new Date(d);
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
-
 const getRecommendations = (level: string) => {
   const lv = level.toLowerCase();
-  if (lv.includes('high')) return [
+  if (lv === 'severe') return [
     { icon: '🧘', text: 'Try 5 minutes of deep breathing', emphasis: true },
     { icon: '🚶', text: 'Take a short walk outdoors' },
     { icon: '💬', text: 'Talk to someone you trust' },
     { icon: '📵', text: 'Step away from screens for a bit' },
   ];
-  if (lv.includes('moderate') || lv.includes('medium')) return [
+  if (lv === 'high') return [
+    { icon: '🧘', text: 'Practice slow, deep breathing', emphasis: true },
+    { icon: '💧', text: 'Drink water and take a short break' },
+    { icon: '🎵', text: 'Listen to calming music' },
+    { icon: '📵', text: 'Limit screen time for a while' },
+  ];
+  if (lv === 'moderate') return [
     { icon: '☕', text: 'Take a mindful break', emphasis: true },
     { icon: '🎵', text: 'Listen to calming music' },
     { icon: '📝', text: 'Journal your thoughts' },
     { icon: '🌿', text: 'Practice gratitude' },
+  ];
+  if (lv === 'mild') return [
+    { icon: '🌱', text: 'Keep a gentle daily routine', emphasis: true },
+    { icon: '😊', text: 'Connect with loved ones' },
+    { icon: '🚶', text: 'Take a short walk' },
+    { icon: '🎯', text: 'Set small, positive intentions' },
   ];
   return [
     { icon: '✨', text: 'Keep up your wellness routine', emphasis: true },
@@ -122,10 +141,106 @@ const getTrendInsight = (results: StressResult[]) => {
   return 'Stress variability has been low — levels appear stable.';
 };
 
+// ── chart helpers ─────────────────────────────────────────────────────────────
+
+const fmtShortDate = (dateString: string): string =>
+  new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+const fmtFull = (dateString: string): string => {
+  const d = new Date(dateString);
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+};
+
+interface ChartPoint {
+  id:          string;
+  xLabel:      string;
+  displayDate: string;
+  score:       number;
+  emotion:     string;
+  delta:       number | null;
+}
+
+const buildChartData = (sorted: StressResult[]): ChartPoint[] => {
+  const labelCount = new Map<string, number>();
+  const labelIndex = new Map<string, number>();
+  for (const r of sorted) {
+    const k = fmtShortDate(r.created_at);
+    labelCount.set(k, (labelCount.get(k) ?? 0) + 1);
+  }
+  return sorted.map((r, i, arr) => {
+    const base = fmtShortDate(r.created_at);
+    let xLabel: string;
+    if ((labelCount.get(base) ?? 0) > 1) {
+      const n = (labelIndex.get(base) ?? 0) + 1;
+      labelIndex.set(base, n);
+      xLabel = n === 1 ? base : `${base} (${n})`;
+    } else {
+      xLabel = base;
+    }
+    return {
+      id:          r.id,
+      xLabel,
+      displayDate: fmtFull(r.created_at),
+      score:       r.stress_score,
+      emotion:     r.predicted_emotion,
+      delta:       i === 0 ? null : r.stress_score - arr[i - 1].stress_score,
+    };
+  });
+};
+
+// ── chart sub-components ──────────────────────────────────────────────────────
+
+const ChartTooltip = ({ active, payload }: { active?: boolean; payload?: any[] }) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload as ChartPoint;
+  const delta = d.delta;
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 text-xs min-w-[200px]">
+      <p className="font-bold text-slate-700 mb-1">{d.displayDate}</p>
+      <p className="text-slate-500 capitalize mb-1">
+        Emotion: <span className="font-semibold text-slate-700">{d.emotion}</span>
+      </p>
+      <p className="text-slate-500 mb-1">
+        Score:{' '}
+        <span className="font-bold" style={{ color: scoreColor(d.score) }}>
+          {d.score.toFixed(1)}
+        </span>
+        <span className="text-slate-400"> / 100</span>
+      </p>
+      {delta !== null && (
+        <p className={`font-medium mt-1 ${delta > 0 ? 'text-rose-500' : delta < 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
+          {delta > 0
+            ? `↑ ${delta.toFixed(1)} pts from previous`
+            : delta < 0
+            ? `↓ ${Math.abs(delta).toFixed(1)} pts from previous`
+            : 'Same as previous'}
+        </p>
+      )}
+    </div>
+  );
+};
+
+const ColoredDot = (props: any) => {
+  const { cx, cy, payload } = props;
+  if (cx == null || cy == null) return null;
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={5}
+      fill={scoreColor(payload.score)}
+      stroke="#fff"
+      strokeWidth={2}
+      style={{ filter: `drop-shadow(0 0 3px ${scoreColor(payload.score)}80)` }}
+    />
+  );
+};
+
 // ── animated fill bar ─────────────────────────────────────────────────────────
 
 function StressMeter({ score }: { score: number }) {
   const fillRef = useRef<HTMLDivElement>(null);
+  const fillColor = scoreColor(score);
 
   useEffect(() => {
     const el = fillRef.current;
@@ -138,66 +253,29 @@ function StressMeter({ score }: { score: number }) {
     return () => clearTimeout(id);
   }, [score]);
 
-  const info = getStressInfo(score);
-  const gradients: Record<string, string> = {
-    emerald: 'from-emerald-400 to-teal-500',
-    amber:   'from-amber-400 to-orange-500',
-    rose:    'from-rose-400 to-red-500',
-  };
-
   return (
     <div className="w-full">
-      {/* Segmented track */}
       <div className="relative h-3 rounded-full bg-slate-100 overflow-hidden">
         <div
           ref={fillRef}
-          className={`absolute top-0 left-0 h-full rounded-full bg-gradient-to-r ${gradients[info.colorCls]} shadow-sm`}
-          style={{ width: '0%' }}
+          className="absolute top-0 left-0 h-full rounded-full shadow-sm"
+          style={{ width: '0%', backgroundColor: fillColor }}
         />
       </div>
-      {/* Segment labels */}
-      <div className="grid grid-cols-3 mt-2 px-0.5">
-        <span className="text-[11px] text-slate-400 font-medium">Low</span>
-        <span className="text-[11px] text-slate-400 font-medium text-center">Medium</span>
-        <span className="text-[11px] text-slate-400 font-medium text-right">High</span>
+      <div className="flex justify-between mt-2.5 px-0.5">
+        {[
+          { label: 'Normal',   dot: 'bg-green-400' },
+          { label: 'Mild',     dot: 'bg-teal-400' },
+          { label: 'Moderate', dot: 'bg-amber-400' },
+          { label: 'High',     dot: 'bg-orange-400' },
+          { label: 'Severe',   dot: 'bg-red-400' },
+        ].map(({ label, dot }) => (
+          <span key={label} className="inline-flex items-center gap-1">
+            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+            <span className="text-[10px] text-slate-400 font-medium">{label}</span>
+          </span>
+        ))}
       </div>
-    </div>
-  );
-}
-
-// ── recharts custom dot ───────────────────────────────────────────────────────
-
-function StressDot(props: any) {
-  const { cx, cy, payload } = props;
-  const info = getStressInfo(payload.score);
-  return (
-    <circle
-      cx={cx}
-      cy={cy}
-      r={5}
-      fill={info.dot}
-      stroke="#fff"
-      strokeWidth={2}
-      style={{ filter: `drop-shadow(0 0 4px ${info.dot}80)` }}
-    />
-  );
-}
-
-// ── recharts custom tooltip ───────────────────────────────────────────────────
-
-function ChartTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  const info = getStressInfo(d.score);
-  return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-xl px-4 py-3 text-sm min-w-[140px]">
-      <p className="text-xs text-slate-400 mb-1">{d.label}</p>
-      <p className="font-bold text-slate-800 text-lg leading-none">
-        {d.score.toFixed(0)}<span className="text-slate-400 font-normal text-sm"> / 100</span>
-      </p>
-      <span className={`inline-block mt-1.5 text-xs font-semibold px-2 py-0.5 rounded-full border ${info.badge}`}>
-        {info.level} Stress
-      </span>
     </div>
   );
 }
@@ -221,10 +299,10 @@ function CardLabel({ children }: { children: React.ReactNode }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export function DashboardView({ results, profile }: DashboardViewProps) {
+export function DashboardView({ results, profile, onNavigateAnalyze }: DashboardViewProps) {
   const latestResult   = results[0] ?? null;
   const averageStress  = results.length ? results.reduce((s, r) => s + r.stress_score, 0) / results.length : 0;
-  const stressInfo     = latestResult ? getStressInfo(latestResult.stress_score) : null;
+  const stressInfo     = latestResult ? getStressInfo(latestResult.stress_level) : null;
   const avgLabel       = avgStressLabel(averageStress);
   const dominantEmotion = topEmotion(results);
   const eMeta          = emotionMeta(dominantEmotion);
@@ -232,23 +310,17 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
   const trendInsight   = getTrendInsight(results);
 
   const displayName = profile?.full_name
-    ? profile.full_name.split(' ')[0]
-    : profile?.email
-    ? profile.email.split('@')[0]
-    : 'there';
-
+  ? profile.full_name
+  : profile?.email
+  ? profile.email.split('@')[0]
+  : 'there';
   const recentTrendDir = results.length >= 2
     ? results[0].stress_score - results[1].stress_score
     : 0;
 
-  // Recharts data — chronological order (oldest → newest)
-  const chartData = results
-    .slice(0, 10)
-    .reverse()
-    .map((r) => ({
-      label: formatChartDate(r.created_at),
-      score: r.stress_score,
-    }));
+  const chartData = buildChartData(
+    [...results].slice(0, 10).reverse()
+  );
 
   if (!latestResult) {
     return (
@@ -271,13 +343,10 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
 
       {/* ── Header ── */}
       <div className="animate-slideDown">
-        <h2 className="text-[28px] font-bold text-slate-800 tracking-tight mb-1">
-          Welcome back, {displayName}
+        <h2 className="text-[28px] font-bold tracking-tight leading-tight">
+          <span className="text-slate-800">Welcome back, </span>
+          <span className="bg-gradient-to-r from-cyan-500 to-teal-500 bg-clip-text text-transparent">{displayName}</span>
         </h2>
-        <p className="text-slate-400 flex items-center gap-2 text-sm">
-          <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
-          Last check: {formatAbsDate(latestResult.created_at)}
-        </p>
       </div>
 
       {/* ── Main 3-col grid ── */}
@@ -286,15 +355,47 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
         {/* ════ LEFT: 2/3 width ════ */}
         <div className="lg:col-span-2 flex flex-col gap-5">
 
+          {/* Daily Check-in Reminder */}
+          <div className="bg-gradient-to-r from-teal-50 to-cyan-50 border border-teal-200 rounded-3xl p-6 animate-slideUp" style={{ animationDelay: '80ms' }}>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-start gap-4 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <Bell className="w-5 h-5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <h3 className="text-sm font-bold text-slate-800">Daily Check-in</h3>
+                    {(() => {
+                      const hoursAgo = (Date.now() - new Date(latestResult.created_at).getTime()) / 36e5;
+                      return hoursAgo <= 24
+                        ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200">Done today</span>
+                        : <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">Due today</span>;
+                    })()}
+                  </div>
+                  <p className="text-xs text-slate-500 leading-snug mb-1">Regular scans help you understand your stress patterns and catch changes early</p>
+                  <p className="text-sm text-slate-700"><span className="font-semibold">Last scan:</span> {formatAbsDate(latestResult.created_at)}</p>
+                </div>
+              </div>
+              <button
+                onClick={onNavigateAnalyze}
+                className="flex-shrink-0 bg-gradient-to-r from-cyan-500 to-teal-500 text-white rounded-xl px-4 py-2 text-sm font-semibold hover:shadow-lg hover:scale-[1.03] active:scale-[0.98] transition-all duration-200 whitespace-nowrap"
+              >
+                Scan Now →
+              </button>
+            </div>
+          </div>
+
           {/* Current Stress Level */}
           <Card delay={80} className="p-7">
             <div className="flex items-start justify-between mb-5">
               <div>
                 <CardLabel>Current Stress Level</CardLabel>
                 <p className={`text-sm font-semibold ${
-                  stressInfo?.colorCls === 'emerald' ? 'text-emerald-600'
-                  : stressInfo?.colorCls === 'amber' ? 'text-amber-600'
-                  : 'text-rose-600'
+                  stressInfo?.colorCls === 'green'  ? 'text-green-600'
+                  : stressInfo?.colorCls === 'teal'   ? 'text-teal-600'
+                  : stressInfo?.colorCls === 'amber'  ? 'text-amber-600'
+                  : stressInfo?.colorCls === 'orange' ? 'text-orange-600'
+                  : 'text-red-600'
                 }`}>{stressInfo?.message}</p>
               </div>
               {recentTrendDir !== 0 && (
@@ -322,7 +423,7 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <span className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-bold border ${stressInfo?.badge}`}>
-                    {stressInfo?.level} Stress
+                    {latestResult.stress_level} Stress
                   </span>
                   <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border ${eMeta.bg} ${eMeta.color}`}>
                     <span className="text-sm">{eMeta.icon}</span>
@@ -341,7 +442,7 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
           {/* Stress Trend Chart */}
           {results.length > 1 && (
             <Card delay={160} className="p-7">
-              <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center justify-between mb-4">
                 <div>
                   <CardLabel>Stress Trend</CardLabel>
                   <h3 className="text-base font-bold text-slate-700">
@@ -355,40 +456,34 @@ export function DashboardView({ results, profile }: DashboardViewProps) {
               </div>
 
               <ResponsiveContainer width="100%" height={210}>
-                <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -12 }}>
-                  <defs>
-                    <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%"   stopColor="#14b8a6" />
-                      <stop offset="100%" stopColor="#06b6d4" />
-                    </linearGradient>
-                  </defs>
+                <LineChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                   <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 500 }}
+                    dataKey="xLabel"
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 500 }}
                     axisLine={false}
                     tickLine={false}
                     dy={6}
+                    interval={0}
+                    height={30}
                   />
                   <YAxis
                     domain={[0, 100]}
-                    tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 500 }}
+                    ticks={[0, 25, 50, 75, 100]}
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 500 }}
                     axisLine={false}
                     tickLine={false}
-                    ticks={[0, 35, 65, 100]}
+                    width={32}
                   />
                   <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#e2e8f0', strokeWidth: 1.5 }} />
-                  <ReferenceLine y={35} stroke="#10b981" strokeDasharray="4 3" strokeOpacity={0.5}
-                    label={{ value: 'Low', position: 'insideTopRight', fontSize: 10, fill: '#10b981', fontWeight: 600 }} />
-                  <ReferenceLine y={65} stroke="#f59e0b" strokeDasharray="4 3" strokeOpacity={0.5}
-                    label={{ value: 'Medium', position: 'insideTopRight', fontSize: 10, fill: '#f59e0b', fontWeight: 600 }} />
                   <Line
-                    type="monotoneX"
+                    type="linear"
                     dataKey="score"
-                    stroke="url(#lineGrad)"
-                    strokeWidth={2.5}
-                    dot={<StressDot />}
+                    stroke="#94a3b8"
+                    strokeWidth={2}
+                    dot={<ColoredDot />}
                     activeDot={{ r: 7, strokeWidth: 2, stroke: '#fff' }}
+                    isAnimationActive
                     animationDuration={900}
                     animationEasing="ease-out"
                   />

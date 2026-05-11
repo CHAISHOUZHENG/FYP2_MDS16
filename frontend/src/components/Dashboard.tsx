@@ -57,15 +57,20 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
 
     switch (currentView) {
       case 'dashboard':
-        return <DashboardView results={results} profile={profile} />;
+        return <DashboardView results={results} profile={profile} onNavigateAnalyze={() => setCurrentView('analyze')} />;
       case 'analyze':
-        return <StressAnalyzer onComplete={handleAnalysisComplete} />;
+        return (
+          <StressAnalyzer
+            onBack={() => setCurrentView('dashboard')}
+            onAnalysisComplete={handleAnalysisComplete}
+          />
+        );
       case 'history':
         return <HistoryView results={results} />;
       case 'profile':
         return <ProfileView profile={profile} onProfileUpdate={handleProfileUpdate} />;
       default:
-        return <DashboardView results={results} profile={profile} />;
+        return <DashboardView results={results} profile={profile} onNavigateAnalyze={() => setCurrentView('analyze')} />;
     }
   };
 

@@ -688,9 +688,17 @@ You are a clinical wellbeing assistant trained in stress management.
 
 Results:
 - Stress score: {stress_score}/100
-- Stress level: {stress_level}
+- Stress level: {stress_level} (scale: Normal < 20, Mild 20-34, Moderate 35-54, High 55-74, Severe 75+)
 - Primary emotion: {predicted_emotion}
 - Emotion probabilities: {json.dumps(probabilities)}
+
+
+Tailor your advice specifically to the stress level:
+- Normal/Mild: gentle maintenance tips, positive reinforcement
+- Moderate: actionable stress reduction techniques
+- High: immediate intervention strategies
+- Severe: urgent coping strategies and professional help guidance
+
 
 Return ONLY valid JSON, no markdown:
 {{

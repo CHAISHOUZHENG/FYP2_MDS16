@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity,
+  Camera,
   RefreshCw,
   Save,
   Wind,
@@ -46,6 +47,7 @@ interface StressResultCardProps {
   isSaving: boolean;
   onSave: () => void;
   onReset: () => void;
+  imageUrl?: string | null;
 }
 
 interface StressTheme {
@@ -64,22 +66,37 @@ interface StressTheme {
 
 const getTheme = (level: string): StressTheme => {
   const lower = level.toLowerCase();
-  if (lower.includes('high')) {
+  if (lower === 'severe') {
     return {
-      gradient: 'from-rose-400 via-red-400 to-orange-400',
-      cardBg: 'bg-gradient-to-br from-rose-50 to-orange-50',
-      badgeBg: 'bg-rose-100',
-      badgeText: 'text-rose-700',
-      borderColor: 'border-rose-200',
-      accentColor: 'text-rose-600',
-      ringColor: 'ring-rose-200',
-      iconBg: 'from-rose-400 to-orange-400',
+      gradient: 'from-red-500 via-rose-500 to-red-400',
+      cardBg: 'bg-gradient-to-br from-red-50 to-rose-50',
+      badgeBg: 'bg-red-100',
+      badgeText: 'text-red-700',
+      borderColor: 'border-red-200',
+      accentColor: 'text-red-600',
+      ringColor: 'ring-red-200',
+      iconBg: 'from-red-500 to-rose-400',
+      label: 'Severe',
+      humanMessage: "Your stress is quite high right now. Please be gentle with yourself.",
+      supportMessage: "It's okay to ask for help.\nTake things one small step at a time — you don't have to do this alone.",
+    };
+  }
+  if (lower === 'high') {
+    return {
+      gradient: 'from-orange-400 via-red-400 to-orange-500',
+      cardBg: 'bg-gradient-to-br from-orange-50 to-red-50',
+      badgeBg: 'bg-orange-100',
+      badgeText: 'text-orange-700',
+      borderColor: 'border-orange-200',
+      accentColor: 'text-orange-600',
+      ringColor: 'ring-orange-200',
+      iconBg: 'from-orange-400 to-red-400',
       label: 'High',
       humanMessage: "You seem a bit tense right now. Let's slow things down together.",
       supportMessage: "Hey, it's okay to feel this way sometimes.\nTake a moment for yourself — you don't have to rush.",
     };
   }
-  if (lower.includes('moderate') || lower.includes('medium')) {
+  if (lower === 'moderate') {
     return {
       gradient: 'from-amber-400 via-orange-400 to-yellow-400',
       cardBg: 'bg-gradient-to-br from-amber-50 to-yellow-50',
@@ -94,22 +111,44 @@ const getTheme = (level: string): StressTheme => {
       supportMessage: "You're doing your best and that's enough.\nA small pause can help restore your balance.",
     };
   }
+  if (lower === 'mild') {
+    return {
+      gradient: 'from-teal-400 via-cyan-400 to-sky-400',
+      cardBg: 'bg-gradient-to-br from-teal-50 to-cyan-50',
+      badgeBg: 'bg-teal-100',
+      badgeText: 'text-teal-700',
+      borderColor: 'border-teal-200',
+      accentColor: 'text-teal-600',
+      ringColor: 'ring-teal-200',
+      iconBg: 'from-teal-400 to-sky-400',
+      label: 'Mild',
+      humanMessage: "A little tension is normal. You're managing well.",
+      supportMessage: "Small self-care habits go a long way.\nYou're doing a great job keeping things in check.",
+    };
+  }
+  /* normal */
   return {
-    gradient: 'from-teal-400 via-cyan-400 to-sky-400',
-    cardBg: 'bg-gradient-to-br from-teal-50 to-cyan-50',
-    badgeBg: 'bg-teal-100',
-    badgeText: 'text-teal-700',
-    borderColor: 'border-teal-200',
-    accentColor: 'text-teal-600',
-    ringColor: 'ring-teal-200',
-    iconBg: 'from-teal-400 to-sky-400',
-    label: 'Low',
+    gradient: 'from-green-400 via-teal-400 to-emerald-400',
+    cardBg: 'bg-gradient-to-br from-green-50 to-teal-50',
+    badgeBg: 'bg-green-100',
+    badgeText: 'text-green-700',
+    borderColor: 'border-green-200',
+    accentColor: 'text-green-600',
+    ringColor: 'ring-green-200',
+    iconBg: 'from-green-400 to-teal-400',
+    label: 'Normal',
     humanMessage: "You're in a calm, centered space. Keep it up.",
     supportMessage: "You're doing wonderfully.\nKeep nurturing this sense of peace — you deserve it.",
   };
 };
 
 const FALLBACK_ADVICE: Record<string, string[]> = {
+  severe: [
+    "Please reach out to someone you trust. You don't have to carry this alone.",
+    "Inhale slowly for 4 counts, hold for 2, then exhale for 6. Repeat three times to activate your body's calming response.",
+    'Step away from your current task entirely. Even a brief reset helps your nervous system recover.',
+    "Remind yourself: you don't need to solve everything right now. Just focus on the next small step.",
+  ],
   high: [
     "Inhale slowly for 4 counts, hold for 2, then exhale for 6. Repeat three times to activate your body's calming response.",
     'Step away from your current task for 5–10 minutes. Even a brief reset helps your nervous system recover.',
@@ -122,7 +161,13 @@ const FALLBACK_ADVICE: Record<string, string[]> = {
     'Try box breathing — 4 counts in, hold 4, out 4, hold 4. Repeat 4 cycles for a measurable calming effect.',
     'Drink a full glass of water. Mild dehydration is a known contributor to elevated stress perception.',
   ],
-  low: [
+  mild: [
+    "You're keeping stress in check. Maintain a short daily wind-down ritual to stay balanced.",
+    'Take three slow, grateful breaths and name one thing that\'s going well in your life today.',
+    'A short walk or light stretch can anchor your calm and carry it through the rest of the day.',
+    'Set a gentle boundary today. Saying no to one non-essential task preserves your balance.',
+  ],
+  normal: [
     "You're in a positive state right now. Take a moment to note what contributed to this — and protect it.",
     'Take three slow, grateful breaths and name one thing that\'s going well in your life today.',
     'A short walk or light stretch can anchor this calm feeling and carry it through the rest of your day.',
@@ -207,7 +252,7 @@ const ScoreRing = ({ score, theme }: { score: number; theme: StressTheme }) => {
   );
 };
 
-export function StressResultCard({ result, isSaving, onSave, onReset }: StressResultCardProps) {
+export function StressResultCard({ result, isSaving, onSave, onReset, imageUrl }: StressResultCardProps) {
   const theme = getTheme(result.stress_level);
   const [visible, setVisible] = useState(false);
 
@@ -228,7 +273,11 @@ export function StressResultCard({ result, isSaving, onSave, onReset }: StressRe
   const urgencyNote = result.suggestion?.urgency_note;
   const whenToSeekHelp = result.suggestion?.when_to_seek_help;
 
-  const stressLevelEmoji = theme.label === 'High' ? '😟' : theme.label === 'Moderate' ? '😐' : '😌';
+  const stressLevelEmoji =
+    theme.label === 'Severe'   ? '😰' :
+    theme.label === 'High'     ? '😟' :
+    theme.label === 'Moderate' ? '😐' :
+    theme.label === 'Mild'     ? '🙂' : '😌';
   const cue = getEmotionCueConfig(result.predicted_emotion);
 
   const fadeClass = (delay: number) =>
@@ -255,23 +304,43 @@ export function StressResultCard({ result, isSaving, onSave, onReset }: StressRe
         </p>
       </div>
 
-      {/* ── Stress Score Card ── */}
-      <div className={`relative rounded-3xl overflow-hidden shadow-2xl mb-5 ${fadeClass(500)}`} style={{ transitionDelay: '500ms' }}>
+      {/* ── Hero: Photo + Score side-by-side (or stacked on mobile) ── */}
+      <div className={`relative rounded-3xl overflow-hidden shadow-2xl mb-5 border ${theme.borderColor} transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '450ms' }}>
         <div className={`absolute inset-0 bg-gradient-to-br ${theme.gradient} opacity-10`} />
         <div className={`absolute -top-28 -right-28 w-80 h-80 rounded-full bg-gradient-to-br ${theme.gradient} opacity-[0.08] blur-3xl`} />
         <div className={`absolute -bottom-28 -left-28 w-80 h-80 rounded-full bg-gradient-to-br ${theme.gradient} opacity-[0.08] blur-3xl`} />
-        <div className={`relative ${theme.cardBg} border ${theme.borderColor} rounded-3xl p-8 sm:p-10`}>
-          <p className="text-center text-xs font-semibold uppercase tracking-widest text-slate-400 mb-7">Your Stress Score</p>
-          <div className="flex flex-col items-center mb-7">
+
+        <div className={`relative ${theme.cardBg} flex flex-col sm:flex-row`}>
+
+          {/* Photo panel */}
+          {imageUrl && (
+            <div className="sm:w-2/5 flex-shrink-0 relative">
+              <img
+                src={imageUrl}
+                alt="Analyzed face"
+                className="w-full h-full object-cover"
+                style={{ minHeight: '260px', maxHeight: '360px' }}
+              />
+              {/* overlay label */}
+              <div className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm rounded-full px-3 py-1">
+                <Camera className="w-3 h-3 text-white/80" />
+                <span className="text-[11px] font-medium text-white/90">Photo analyzed</span>
+              </div>
+            </div>
+          )}
+
+          {/* Score panel */}
+          <div className={`flex-1 flex flex-col items-center justify-center p-8 sm:p-10 ${imageUrl ? '' : 'w-full'}`}>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-6">Your Stress Score</p>
             <ScoreRing score={result.stress_score} theme={theme} />
+            <div className="flex justify-center mt-6 mb-4">
+              <span className={`inline-flex items-center gap-2.5 px-6 py-2.5 rounded-full text-sm font-bold ${theme.badgeBg} ${theme.badgeText} ring-2 ${theme.ringColor}`}>
+                <span className="text-xl">{stressLevelEmoji}</span>
+                {theme.label} Stress Level
+              </span>
+            </div>
+            <p className={`text-center text-sm font-medium ${theme.accentColor} leading-relaxed max-w-xs`}>{theme.humanMessage}</p>
           </div>
-          <div className="flex justify-center mb-6">
-            <span className={`inline-flex items-center gap-2.5 px-6 py-2.5 rounded-full text-sm font-bold ${theme.badgeBg} ${theme.badgeText} ring-2 ${theme.ringColor}`}>
-              <span className="text-xl">{stressLevelEmoji}</span>
-              {theme.label} Stress Level
-            </span>
-          </div>
-          <p className={`text-center text-base font-medium ${theme.accentColor} leading-relaxed`}>{theme.humanMessage}</p>
         </div>
       </div>
 
@@ -294,7 +363,7 @@ export function StressResultCard({ result, isSaving, onSave, onReset }: StressRe
       <div className={`bg-slate-800 rounded-3xl px-7 py-6 mb-7 ${fadeClass(660)}`} style={{ transitionDelay: '660ms' }}>
         <div className="flex items-start gap-4">
           <div className="text-2xl flex-shrink-0 mt-0.5">
-            {theme.label === 'High' ? '💛' : theme.label === 'Moderate' ? '🌤️' : '✨'}
+            {theme.label === 'Severe' ? '🆘' : theme.label === 'High' ? '💛' : theme.label === 'Moderate' ? '🌤️' : '✨'}
           </div>
           <div>
             {theme.supportMessage.split('\n').map((line, i) => (
@@ -456,9 +525,14 @@ export function StressResultCard({ result, isSaving, onSave, onReset }: StressRe
         </button>
       </div>
 
-      <p className="text-center text-xs text-slate-400 mt-4 leading-relaxed">
-        Your results are saved privately and securely.
-      </p>
+      <div className="flex items-center justify-center gap-2 mt-4">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-400 bg-slate-50 border border-slate-200 rounded-full px-3 py-1">
+          <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+          Saved privately & securely
+        </span>
+      </div>
     </div>
   );
 }
