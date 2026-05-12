@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 from torchvision import transforms
 import os
 import json
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 from models.senet import SENet18
 import re
@@ -31,8 +31,12 @@ app.add_middleware(
 
 load_dotenv()
 
-# Gemini client will automatically read GEMINI_API_KEY from environment
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+if not gemini_api_key:
+    raise RuntimeError("GEMINI_API_KEY is missing. Check your .env file.")
+
+gemini_model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+gemini_client = genai.Client(api_key=gemini_api_key)
 
 emotions = [
     "angry",
@@ -744,8 +748,13 @@ Return ONLY valid JSON, no markdown:
 """
 
     try:
-        gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-        response = gemini_model.generate_content(prompt)
+        response = gemini_client.models.generate_content(
+            model=gemini_model_name,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+            },
+        )
 
 
         print("\n===== GEMINI RAW RESPONSE =====")
