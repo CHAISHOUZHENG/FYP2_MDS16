@@ -16,9 +16,11 @@ import re
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 try:
-    import mediapipe as mp
+    from mediapipe.python.solutions import face_detection as mp_face_detection
+    from mediapipe.python.solutions import face_mesh as mp_face_mesh
 except ImportError:
-    mp = None
+    mp_face_detection = None
+    mp_face_mesh = None
 
 try:
     from retinaface import RetinaFace
@@ -82,16 +84,14 @@ def preprocess_face_for_model(face_image: Image.Image) -> torch.Tensor:
 
 
 try:
-    if mp is None:
+    if mp_face_detection is None or mp_face_mesh is None:
         raise RuntimeError("mediapipe is not installed")
 
-    mp_face_detection = mp.solutions.face_detection
     face_detector = mp_face_detection.FaceDetection(
         model_selection=1,
         min_detection_confidence=0.6
     )
 
-    mp_face_mesh = mp.solutions.face_mesh
     face_mesh = mp_face_mesh.FaceMesh(
         static_image_mode=True,
         max_num_faces=1,
