@@ -11,4 +11,3 @@ python-dotenv
 mediapipe
 matplotlib
 pydantic
-retinaface

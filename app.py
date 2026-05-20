@@ -17,7 +17,10 @@ import re
 from fastapi import FastAPI, File, UploadFile, HTTPException
 import mediapipe as mp
 
-from retinaface import RetinaFace
+try:
+    from retinaface import RetinaFace
+except ImportError:
+    RetinaFace = None
 
 app = FastAPI()
 
@@ -286,8 +289,11 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
 
 def detect_and_crop_face(image: np.ndarray):
     if face_detector is None:
-        print("[DEBUG] MediaPipe FaceDetection unavailable; using RetinaFace fallback")
-        return detect_and_crop_face_retina(image)
+        if RetinaFace is not None:
+            print("[DEBUG] MediaPipe FaceDetection unavailable; using RetinaFace fallback")
+            return detect_and_crop_face_retina(image)
+        print("[DEBUG] No face detector is available")
+        return None, None, "no_face"
 
     h, w = image.shape[:2]
 
@@ -412,6 +418,9 @@ def detect_and_crop_face(image: np.ndarray):
 
 
 def detect_and_crop_face_retina(image: np.ndarray):
+    if RetinaFace is None:
+        return None, None, "no_face"
+
     h, w = image.shape[:2]
 
     if max(h, w) > 800:
