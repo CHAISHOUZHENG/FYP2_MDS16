@@ -6,16 +6,19 @@ import torch
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps
-from torchvision import transforms
 import os
 import json
+import gc
 from google import genai
 from dotenv import load_dotenv
 from models.senet import SENet18
 import re
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-import mediapipe as mp
+try:
+    import mediapipe as mp
+except ImportError:
+    mp = None
 
 try:
     from retinaface import RetinaFace
@@ -62,19 +65,26 @@ stress_weights = {
 }
 
 # load model
+torch.set_num_threads(1)
 model = SENet18()
 checkpoint = torch.load("best_checkpoint.tar", map_location="cpu")
 model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
+del checkpoint
+gc.collect()
 
-transform = transforms.Compose([
-    transforms.Resize((40, 40)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=(0,), std=(255,))
-])
+
+def preprocess_face_for_model(face_image: Image.Image) -> torch.Tensor:
+    face_image = face_image.resize((40, 40))
+    arr = np.asarray(face_image, dtype=np.float32) / 255.0
+    arr = arr / 255.0
+    return torch.from_numpy(arr).unsqueeze(0)
 
 
 try:
+    if mp is None:
+        raise RuntimeError("mediapipe is not installed")
+
     mp_face_detection = mp.solutions.face_detection
     face_detector = mp_face_detection.FaceDetection(
         model_selection=1,
@@ -902,7 +912,7 @@ async def predict(file: UploadFile = File(...)):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     face = clahe.apply(face)
     face = Image.fromarray(face)
-    face_tensor = transform(face)
+    face_tensor = preprocess_face_for_model(face)
     x = face_tensor.unsqueeze(0)
     print(f"[TIME] preprocessing: {time.perf_counter() - t0:.4f}s")
 
