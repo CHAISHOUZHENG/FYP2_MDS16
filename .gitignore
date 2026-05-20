@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 .env
 *.tar
+!best_checkpoint.tar
+.DS_Store
+.matplotlib-cache/
+.node/
+.npm-cache/
+frontend/dist/
+frontend/.DS_Store
