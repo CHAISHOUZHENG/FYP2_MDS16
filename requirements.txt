@@ -7,7 +7,9 @@ torchvision
 pillow
 google-genai
 python-dotenv
+python-multipart
 mediapipe
 matplotlib
 pydantic
-retinaface
+retina-face
+tf-keras

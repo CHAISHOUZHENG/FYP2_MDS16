@@ -3,11 +3,14 @@ import time
 import cv2
 import numpy as np
 import torch
+import os
+
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps
 from torchvision import transforms
-import os
 import json
 from google import genai
 from dotenv import load_dotenv
@@ -85,7 +88,7 @@ try:
         refine_landmarks=True,
         min_detection_confidence=0.5
     )
-except RuntimeError as e:
+except (RuntimeError, AttributeError) as e:
     print("[MEDIAPIPE INIT ERROR]", str(e))
     face_detector = None
     face_mesh = None
