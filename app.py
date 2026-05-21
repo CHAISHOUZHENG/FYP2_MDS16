@@ -112,7 +112,8 @@ def validate_facial_obstruction(image: np.ndarray) -> tuple[bool, str, any]:
     results = face_mesh.process(image)
 
     if not results.multi_face_landmarks:
-        return False, "no_face", None
+        print("[DEBUG OBSTRUCTION] FaceMesh landmarks unavailable; skipping landmark obstruction check")
+        return True, "ok", None
 
     landmarks = results.multi_face_landmarks[0].landmark
 
@@ -302,8 +303,8 @@ def detect_and_crop_face(image: np.ndarray):
         if RetinaFace is not None:
             print("[DEBUG] MediaPipe FaceDetection unavailable; using RetinaFace fallback")
             return detect_and_crop_face_retina(image)
-        print("[DEBUG] No face detector is available")
-        return None, None, "no_face"
+        print("[DEBUG] MediaPipe FaceDetection unavailable; using OpenCV Haar fallback")
+        return detect_and_crop_face_haar(image)
 
     h, w = image.shape[:2]
 
@@ -321,7 +322,7 @@ def detect_and_crop_face(image: np.ndarray):
 
     if not results.detections:
         print("[DEBUG] REJECTED — no detections at all")
-        return None, None, "no_face"  
+        return detect_and_crop_face_haar(image)
     
     if len(results.detections) > 1:
         print(f"[DEBUG] REJECTED — multiple faces detected: {len(results.detections)}")
@@ -342,7 +343,8 @@ def detect_and_crop_face(image: np.ndarray):
     bh = int(bbox.height * wh)
 
     # Reject if face is too small
-    if bw < 80 or bh < 80:
+    if bw < 60 or bh < 60:
+        print(f"[DEBUG] REJECTED — face too small: {bw}x{bh}")
         return None, None, "no_face" 
 
     # Reject if face area is less than 3% of total image — too far away
@@ -424,6 +426,75 @@ def detect_and_crop_face(image: np.ndarray):
         )
 
     print(f"[DEBUG] Crop size: {crop.shape[1]}x{crop.shape[0]}")
+    return crop, work_img, "ok"
+
+
+def detect_and_crop_face_haar(image: np.ndarray):
+    h, w = image.shape[:2]
+
+    if max(h, w) > 800:
+        scale = 800 / max(h, w)
+        work_img = cv2.resize(image, (int(w * scale), int(h * scale)))
+    else:
+        work_img = image.copy()
+
+    wh, ww = work_img.shape[:2]
+    gray = cv2.cvtColor(work_img, cv2.COLOR_RGB2GRAY)
+    gray = cv2.equalizeHist(gray)
+
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+
+    if face_cascade.empty():
+        print("[HAAR] REJECTED — Haar cascade unavailable")
+        return None, None, "no_face"
+
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.08,
+        minNeighbors=4,
+        minSize=(50, 50)
+    )
+
+    print(f"[HAAR] Detections found: {len(faces)}")
+
+    if len(faces) == 0:
+        return None, None, "no_face"
+
+    if len(faces) > 1:
+        return None, None, "multiple_faces"
+
+    x, y, bw, bh = faces[0]
+
+    if bw < 50 or bh < 50:
+        print(f"[HAAR] REJECTED — face too small: {bw}x{bh}")
+        return None, None, "no_face"
+
+    face_area_ratio = (bw * bh) / (ww * wh)
+    if face_area_ratio < 0.02:
+        return None, None, "too_far"
+
+    pad = int(max(bw, bh) * 0.12)
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+    x2 = min(ww, x + bw + pad)
+    y2 = min(wh, y + bh + pad)
+
+    crop = work_img[y1:y2, x1:x2]
+
+    ch, cw = crop.shape[:2]
+    if ch != cw:
+        side = max(ch, cw)
+        pad_top = (side - ch) // 2
+        pad_bot = side - ch - pad_top
+        pad_left = (side - cw) // 2
+        pad_right = side - cw - pad_left
+        crop = cv2.copyMakeBorder(
+            crop, pad_top, pad_bot, pad_left, pad_right,
+            cv2.BORDER_REFLECT_101
+        )
+
+    print(f"[HAAR] Crop size: {crop.shape[1]}x{crop.shape[0]}")
     return crop, work_img, "ok"
 
 
