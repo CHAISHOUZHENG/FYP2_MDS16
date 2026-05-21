@@ -9,12 +9,15 @@ from PIL import Image, ImageOps
 from torchvision import transforms
 import os
 import json
+from pathlib import Path
 from google import genai
 from dotenv import load_dotenv
 from models.senet import SENet18
 import re
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 try:
     from mediapipe.python.solutions import face_detection as mp_face_detection
     from mediapipe.python.solutions import face_mesh as mp_face_mesh
@@ -25,6 +28,8 @@ except ImportError:
 from retinaface import RetinaFace
 
 app = FastAPI()
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 
 app.add_middleware(
     CORSMiddleware,
@@ -793,6 +798,14 @@ Return ONLY valid JSON, no markdown:
 
 @app.get("/")
 def home():
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "Stress Detector Backend is running."}
+
+
+@app.get("/api/health")
+def health():
     return {"message": "Stress Detector Backend is running."}
 
     
@@ -954,3 +967,17 @@ async def predict(file: UploadFile = File(...)):
         "landmark_stress_signal": landmark_signal,
         "suggestion": suggestion
     }
+
+
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+
+@app.get("/{full_path:path}")
+def serve_frontend(full_path: str):
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    raise HTTPException(status_code=404, detail="Not found")

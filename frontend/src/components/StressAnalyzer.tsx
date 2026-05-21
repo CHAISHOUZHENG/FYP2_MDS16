@@ -51,7 +51,7 @@ type AnalysisStep = 'idle' | 'detecting' | 'quality' | 'analyzing' | 'generating
 
 export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerProps) {
   const { session } = useAuth();
-  const [backendUrl] = useState('http://127.0.0.1:8000/predict');
+  const [backendUrl] = useState(import.meta.env.VITE_API_URL ?? '/predict');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
