@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY . .
 
 RUN useradd -m -u 1000 user \
+    && mkdir -p /tmp/matplotlib \
     && chown -R user:user /app /tmp/matplotlib
 
 USER user
