@@ -15,7 +15,12 @@ from models.senet import SENet18
 import re
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-import mediapipe as mp
+try:
+    from mediapipe.python.solutions import face_detection as mp_face_detection
+    from mediapipe.python.solutions import face_mesh as mp_face_mesh
+except ImportError:
+    mp_face_detection = None
+    mp_face_mesh = None
 
 from retinaface import RetinaFace
 
@@ -72,13 +77,14 @@ transform = transforms.Compose([
 
 
 try:
-    mp_face_detection = mp.solutions.face_detection
+    if mp_face_detection is None or mp_face_mesh is None:
+        raise RuntimeError("mediapipe solutions are not available")
+
     face_detector = mp_face_detection.FaceDetection(
         model_selection=1,
         min_detection_confidence=0.6
     )
 
-    mp_face_mesh = mp.solutions.face_mesh
     face_mesh = mp_face_mesh.FaceMesh(
         static_image_mode=True,
         max_num_faces=1,
