@@ -18,18 +18,26 @@ import re
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+# RetinaFace is built against the pre-Keras-3 TensorFlow API. This must be set
+# before importing retinaface/tensorflow, otherwise deployed builds can crash.
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+
 try:
     import mediapipe as mp
-    mp_face_detection = getattr(mp, "solutions", None).face_detection
-    mp_face_mesh = getattr(mp, "solutions", None).face_mesh
-except ImportError:
-    mp_face_detection = None
-    mp_face_mesh = None
-except AttributeError:
+except ImportError as e:
+    print("[MEDIAPIPE IMPORT ERROR]", str(e))
+    mp = None
+
+if mp is not None and getattr(mp, "solutions", None) is not None:
+    mp_face_detection = mp.solutions.face_detection
+    mp_face_mesh = mp.solutions.face_mesh
+else:
     try:
         from mediapipe.python.solutions import face_detection as mp_face_detection
         from mediapipe.python.solutions import face_mesh as mp_face_mesh
-    except ImportError:
+    except (ImportError, AttributeError) as e:
+        print("[MEDIAPIPE SOLUTIONS IMPORT ERROR]", str(e))
         mp_face_detection = None
         mp_face_mesh = None
 

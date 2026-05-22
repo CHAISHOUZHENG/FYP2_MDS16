@@ -8,8 +8,9 @@ torchvision
 pillow
 google-genai
 python-dotenv
-mediapipe
+mediapipe==0.10.21
 matplotlib
 pydantic
 retina-face
-tf-keras
+tensorflow==2.15.1
+tf-keras==2.15.0
