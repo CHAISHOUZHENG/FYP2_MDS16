@@ -19,11 +19,19 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 try:
-    from mediapipe.python.solutions import face_detection as mp_face_detection
-    from mediapipe.python.solutions import face_mesh as mp_face_mesh
+    import mediapipe as mp
+    mp_face_detection = getattr(mp, "solutions", None).face_detection
+    mp_face_mesh = getattr(mp, "solutions", None).face_mesh
 except ImportError:
     mp_face_detection = None
     mp_face_mesh = None
+except AttributeError:
+    try:
+        from mediapipe.python.solutions import face_detection as mp_face_detection
+        from mediapipe.python.solutions import face_mesh as mp_face_mesh
+    except ImportError:
+        mp_face_detection = None
+        mp_face_mesh = None
 
 from retinaface import RetinaFace
 
@@ -315,8 +323,8 @@ def detect_and_crop_face(image: np.ndarray):
     print(f"[DEBUG] Detections found: {len(results.detections) if results.detections else 0}")
 
     if not results.detections:
-        print("[DEBUG] REJECTED — no detections at all")
-        return None, None, "no_face"  
+        print("[DEBUG] MediaPipe found no face; trying RetinaFace fallback")
+        return detect_and_crop_face_retina(image)
     
     if len(results.detections) > 1:
         print(f"[DEBUG] REJECTED — multiple faces detected: {len(results.detections)}")
@@ -327,8 +335,8 @@ def detect_and_crop_face(image: np.ndarray):
     confidence = det.score[0]
     print(f"[DEBUG] Confidence score: {confidence:.4f}")
     if confidence < 0.65:
-        print(f"[DEBUG] REJECTED — confidence too low: {confidence:.4f}")
-        return None, None, "low_confidence"
+        print(f"[DEBUG] MediaPipe confidence too low ({confidence:.4f}); trying RetinaFace fallback")
+        return detect_and_crop_face_retina(image)
 
     bbox = det.location_data.relative_bounding_box
     x = int(bbox.xmin * ww)
@@ -338,7 +346,8 @@ def detect_and_crop_face(image: np.ndarray):
 
     # Reject if face is too small
     if bw < 80 or bh < 80:
-        return None, None, "no_face" 
+        print(f"[DEBUG] MediaPipe face too small ({bw}x{bh}); trying RetinaFace fallback")
+        return detect_and_crop_face_retina(image)
 
     # Reject if face area is less than 3% of total image — too far away
     face_area_ratio = (bw * bh) / (ww * wh)
