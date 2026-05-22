@@ -46,7 +46,6 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
       created_at: new Date().toISOString(),
     };
     setResults(prev => [optimistic, ...prev]);
-    setCurrentView('dashboard');
     fetchResults();
   };
 
@@ -101,7 +100,7 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
         currentView={currentView}
         onViewChange={(view) => {
           if (view === 'analyze') setAnalyzeKey(k => k + 1);
-          if (view === 'dashboard') fetchResults(); // ← add this
+          if (view === 'dashboard' || view === 'history') fetchResults();
           setCurrentView(view);
         }}
         onLogOut={onLogOut}

@@ -143,13 +143,22 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
 
       // Auto-save immediately
       if (session?.user) {
-        await supabase.from('stress_results').insert({
+        const { error } = await supabase.from('stress_results').insert({
           user_id: session.user.id,
           predicted_emotion: data.predicted_emotion,
           stress_score: data.stress_score,
           stress_level: data.stress_level,
           probabilities: data.probabilities,
         });
+
+        if (!error) {
+          onAnalysisComplete({
+            predicted_emotion: data.predicted_emotion,
+            stress_score: data.stress_score,
+            stress_level: data.stress_level,
+            probabilities: data.probabilities,
+          });
+        }
       }
     } catch {
       setValidationFeedback(getAnalysisFeedbackConfig(''));
