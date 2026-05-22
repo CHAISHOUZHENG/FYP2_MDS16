@@ -44,7 +44,7 @@ export interface AnalysisResult {
 
 interface StressAnalyzerProps {
   onBack: () => void;
-  onAnalysisComplete: (result: AnalysisResult) => void;
+  onAnalysisComplete: (result: AnalysisResult, saved?: boolean) => void;
 }
 
 type AnalysisStep = 'idle' | 'detecting' | 'quality' | 'analyzing' | 'generating';
@@ -141,6 +141,14 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
       const data: PredictionResult = await response.json();
       setResult(data);
 
+      const latestResult = {
+        predicted_emotion: data.predicted_emotion,
+        stress_score: data.stress_score,
+        stress_level: data.stress_level,
+        probabilities: data.probabilities,
+      };
+      onAnalysisComplete(latestResult);
+
       // Auto-save immediately
       if (session?.user) {
         const { error } = await supabase.from('stress_results').insert({
@@ -152,12 +160,7 @@ export function StressAnalyzer({ onBack, onAnalysisComplete }: StressAnalyzerPro
         });
 
         if (!error) {
-          onAnalysisComplete({
-            predicted_emotion: data.predicted_emotion,
-            stress_score: data.stress_score,
-            stress_level: data.stress_level,
-            probabilities: data.probabilities,
-          });
+          onAnalysisComplete(latestResult, true);
         }
       }
     } catch {

@@ -23,19 +23,29 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
     fetchResults();
   }, []);
 
-  const fetchResults = async () => {
+  const fetchResults = async ({ preservePending = true } = {}) => {
     const { data, error } = await supabase
       .from('stress_results')
       .select('*')
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      setResults(data);
+      setResults(prev => {
+        const pendingResults = preservePending
+          ? prev.filter(result => result.id.startsWith('pending-'))
+          : [];
+        return [...pendingResults, ...data];
+      });
     }
     setLoading(false);
   };
 
-  const handleAnalysisComplete = (latest: AnalysisResult) => {
+  const handleAnalysisComplete = (latest: AnalysisResult, saved = false) => {
+    if (saved) {
+      fetchResults({ preservePending: false });
+      return;
+    }
+
     const optimistic: StressResult = {
       id: `pending-${Date.now()}`,
       user_id: '',
@@ -45,8 +55,10 @@ export function Dashboard({ onAnalyze, onLogOut }: DashboardProps) {
       probabilities: latest.probabilities,
       created_at: new Date().toISOString(),
     };
-    setResults(prev => [optimistic, ...prev]);
-    fetchResults();
+    setResults(prev => {
+      const alreadyPending = prev.some(result => result.id.startsWith('pending-'));
+      return alreadyPending ? prev : [optimistic, ...prev];
+    });
   };
 
   const handleProfileUpdate = async () => {
