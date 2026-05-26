@@ -722,6 +722,50 @@ def get_stress_level(score: float) -> str:
     return "Severe"
 
 
+def get_fallback_stress_suggestion(stress_level: str, predicted_emotion: str) -> dict:
+    high_stress = stress_level in {"High", "Severe"}
+    return {
+        "title": "Wellbeing suggestion",
+        "advice": [
+            "Pause for a short breathing exercise and slow your pace for the next few minutes.",
+            "Drink water, relax your shoulders, and step away from immediate stressors if possible.",
+            "If this feeling continues or becomes difficult to manage, consider speaking with someone you trust or a qualified professional.",
+        ],
+        "summary": (
+            f"The analysis suggests a {stress_level.lower()} stress level with {predicted_emotion} as the primary detected emotion. "
+            "Use this as a wellbeing signal rather than a medical diagnosis."
+        ),
+        "urgency_note": (
+            "Your result is elevated, so take a short break now and seek support if distress persists."
+            if high_stress
+            else None
+        ),
+        "categories": [
+            {
+                "category": "Breathing & Immediate Relief",
+                "icon": "wind",
+                "tip": "Try inhaling for 4 counts, holding for 2 counts, and exhaling for 6 counts for one minute.",
+            },
+            {
+                "category": "Physical Wellbeing",
+                "icon": "heart",
+                "tip": "Relax your jaw and shoulders, drink water, and move away from the screen briefly.",
+            },
+            {
+                "category": "Mental Reframe",
+                "icon": "brain",
+                "tip": "Name one thing you can control right now and focus only on the next small step.",
+            },
+            {
+                "category": "Rest & Recovery",
+                "icon": "moon",
+                "tip": "Plan a short recovery break and avoid stacking another demanding task immediately.",
+            },
+        ],
+        "when_to_seek_help": "Seek professional support if stress feels intense, lasts for a long time, or affects sleep, appetite, study, work, or safety.",
+    }
+
+
 def get_stress_suggestion(
     stress_score: float,
     stress_level: str,
@@ -808,10 +852,7 @@ Return ONLY valid JSON, no markdown:
 
     except Exception as e:
         print("[GEMINI ERROR]", str(e))
-        return {
-            "title": "Suggestion unavailable",
-            "advice": [f"Could not generate suggestion: {str(e)}"]
-        }
+        return get_fallback_stress_suggestion(stress_level, predicted_emotion)
 
 @app.get("/")
 def home():
